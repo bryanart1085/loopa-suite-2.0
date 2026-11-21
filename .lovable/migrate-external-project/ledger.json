@@ -1,0 +1,58 @@
+[
+ {
+  "capability": "code",
+  "source": "GitHub Bryan1085/Prueba-ecosistema-loopa (Vite + React SPA)",
+  "outcome": "migrate into TanStack Start, client-only render at /",
+  "status": "verified",
+  "next_action": "none"
+ },
+ {
+  "capability": "assets",
+  "source": "public/ (brand, icons, manifest)",
+  "outcome": "copy to public/",
+  "status": "verified",
+  "next_action": "none"
+ },
+ {
+  "capability": "schema",
+  "source": "none",
+  "outcome": "absent - app stores projects locally in browser (IndexedDB/localStorage)",
+  "status": "verified",
+  "next_action": "none"
+ },
+ {
+  "capability": "records",
+  "source": "none",
+  "outcome": "absent - per-browser local storage only",
+  "status": "verified",
+  "next_action": "none"
+ },
+ {
+  "capability": "auth",
+  "source": "none",
+  "outcome": "absent",
+  "status": "verified",
+  "next_action": "none"
+ },
+ {
+  "capability": "ai",
+  "source": "@google/genai dependency + GEMINI_API_KEY in .env.example",
+  "outcome": "absent - no call sites in source",
+  "status": "verified",
+  "next_action": "none"
+ },
+ {
+  "capability": "server/express",
+  "source": "express dependency",
+  "outcome": "absent - no server file in repo",
+  "status": "verified",
+  "next_action": "none"
+ },
+ {
+  "capability": "verification",
+  "source": "-",
+  "outcome": "gallery, create project, 3D modeler viewport, persistence after reload and duplicate checked in browser",
+  "status": "verified",
+  "next_action": "none"
+ }
+]

@@ -28,3 +28,9 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+## Project rules
+
+- The LOOPA 3D modeler lives in `src/loopa/` (migrated from a Vite SPA) and is mounted at `/` via a lazy import inside `<ClientOnly>`; it uses three.js, IndexedDB and window APIs, so never import it statically from SSR code.
+- LOOPA projects persist only in the browser (IndexedDB with localStorage mirror); there is no backend.
+- `tsconfig.json` disables `noUncheckedIndexedAccess`, `noPropertyAccessFromIndexSignature` and `exactOptionalPropertyTypes` because the migrated LOOPA code was written without them; re-enable only after fixing `src/loopa/` for them.
