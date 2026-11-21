@@ -1,3 +1,4 @@
+import { sanitizeEcosystemMeta } from '../ecosystem/signatures';
 import * as THREE from 'three';
 import { createCubeMesh, createPrimitiveMesh, PRIMITIVE_LABELS } from '../mesh/primitives';
 import { normalizeModifierSlot } from '../modifiers/types';
@@ -974,6 +975,8 @@ export function normalizeProjectHierarchy(raw: unknown): ProjectData | null {
     materials: Array.isArray(candidate.materials) ? candidate.materials : undefined,
     scenes: normalizedScenes,
   };
+  const ecosystem = sanitizeEcosystemMeta(candidate.ecosystem);
+  if (ecosystem) normalizedProject.ecosystem = ecosystem;
 
   return syncProjectMaterialsAndObjects(normalizedProject);
 }

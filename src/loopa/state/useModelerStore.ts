@@ -218,6 +218,7 @@ export type ToolResetTarget =
   | 'scale'
   | 'proportional';
 import { SerializedEditableMesh } from '../core/mesh/EditableMesh';
+import type { ProjectEcosystemMeta } from '../core/ecosystem/types';
 import {
   applySingleModifierToMesh,
   buildTransformRefsFromObjects,
@@ -1192,6 +1193,30 @@ export function useModelerStore() {
     [performPersistProject, project],
   );
 
+  /** LOOPA Core: update ecosystem metadata in memory (persisted with the next save). */
+  const setEcosystemMeta = useCallback((meta: ProjectEcosystemMeta) => {
+    skipNextTimelapseEffectRef.current = true;
+    setProject((curr) => ({ ...curr, ecosystem: meta }));
+  }, []);
+
+  /** LOOPA Core: persist the current project together with fresh ecosystem metadata. */
+  const saveProjectWithEcosystem = useCallback(
+    async (
+      meta: ProjectEcosystemMeta,
+      explicitThumbnail?: string | null,
+    ): Promise<boolean> => {
+      skipNextTimelapseEffectRef.current = true;
+      setProject((curr) =>
+        curr.id === project.id ? { ...curr, ecosystem: meta } : curr,
+      );
+      return performPersistProject(
+        { ...project, ecosystem: meta },
+        { explicitThumbnail, silent: true },
+      );
+    },
+    [performPersistProject, project],
+  );
+
   const saveProjectAs = useCallback(
     async (newName: string): Promise<boolean> => {
       const trimmed = newName.trim() || `${project.name} (copia)`;
@@ -1816,6 +1841,55 @@ export function useModelerStore() {
       selectedObject,
       setSingleSelectedObject,
       showToast,
+      workMode,
+    ],
+  );
+
+  /**
+   * LOOPA Ecosystem: put the viewport in the work mode an app needs.
+   * Sculpt needs a sculptable mesh: keeps the selected one or picks the first
+   * visible, unlocked mesh in the active scene.
+   */
+  const enterAppWorkMode = useCallback(
+    (app: 'modeler' | 'sculpt'): boolean => {
+      if (app === 'modeler') {
+        if (workMode === 'sculpt') toggleWorkMode('object');
+        return true;
+      }
+      if (workMode === 'sculpt') return true;
+      if (
+        selectedObject &&
+        isEditableMeshObject(selectedObject) &&
+        !selectedObject.locked
+      ) {
+        toggleWorkMode('sculpt');
+        return true;
+      }
+      const target = activeObjects.find(
+        (o) => isEditableMeshObject(o) && !o.locked && o.visible !== false,
+      );
+      if (!target) {
+        showToast('Añade un objeto de malla para esculpir en LOOPA Sculpt');
+        return false;
+      }
+      setOperatorSession(null);
+      setModalTransform(null);
+      setModalCancelNonce((n) => n + 1);
+      releaseScreenModifiers();
+      if (workMode === 'edit') saveCurrentEditSelection();
+      setSelectedComponentIds(new Set());
+      setSingleSelectedObject(target.id);
+      setWorkMode('sculpt');
+      return true;
+    },
+    [
+      activeObjects,
+      releaseScreenModifiers,
+      saveCurrentEditSelection,
+      selectedObject,
+      setSingleSelectedObject,
+      showToast,
+      toggleWorkMode,
       workMode,
     ],
   );
@@ -6417,6 +6491,9 @@ export function useModelerStore() {
     saveProject,
     saveProjectSilent,
     saveProjectAs,
+    setEcosystemMeta,
+    saveProjectWithEcosystem,
+    enterAppWorkMode,
     createProject,
     openProject,
     applyRecoveryDraft,

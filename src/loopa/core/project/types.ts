@@ -51,6 +51,7 @@ export interface ObjectTransformChange {
 }
 
 import type { ModifierSlot } from '../modifiers/types';
+import type { LoopaAppId, ProjectEcosystemMeta } from '../ecosystem/types';
 export type { ModifierSlot, ModifierType } from '../modifiers/types';
 
 export type ObjectShadingMode = 'flat' | 'smooth';
@@ -210,6 +211,8 @@ export interface ProjectData {
   activeSceneId: string;
   materials?: MaterialAsset[];
   scenes: SceneData[];
+  /** LOOPA Ecosystem metadata (last app, session history, UV basis). */
+  ecosystem?: ProjectEcosystemMeta;
 }
 
 export interface ProjectSummary {
@@ -222,6 +225,8 @@ export interface ProjectSummary {
   folderId: string | null;
   thumbnailDataUrl?: string | null;
   hasRecoveryDraft?: boolean;
+  templateId?: ProjectTemplateId;
+  lastAppId?: LoopaAppId;
 }
 
 export interface ProjectRecoveryRecord {

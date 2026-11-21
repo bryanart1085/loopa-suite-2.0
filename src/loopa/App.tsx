@@ -24,7 +24,6 @@ import { ProjectModal, ProjectModalMode } from './components/ProjectModal';
 import { SettingsModal, SettingsTabId } from './components/SettingsModal';
 import { TimelapseModal } from './components/TimelapseModal';
 import { SceneStatsInfo, TopBar, WorkspaceId } from './components/TopBar';
-import { LoopaEcosystemHub } from './components/LoopaEcosystemHub';
 import { LoopaEcosystemLanding } from './components/LoopaEcosystemLanding';
 import { ProjectEcosystemLauncherModal } from './components/ProjectEcosystemLauncherModal';
 import {
@@ -73,6 +72,17 @@ import { getAppDocumentTitle } from './config/brand';
 import { DEMO_MODE } from './config/demo';
 import { EMPTY_MODIFIER_STATE } from './engine/TouchGestureManager';
 import { useModelerStore } from './state/useModelerStore';
+import { LOOPA_APPS, PROJECT_DOMAIN_LABELS } from './core/ecosystem/apps';
+import {
+  computeProjectSignature,
+  createEmptyEcosystemMeta,
+  finalizeAppSession,
+  findStaleUvObjects,
+  type ProjectSignature,
+  type SessionResult,
+} from './core/ecosystem/signatures';
+import type { LoopaAppId } from './core/ecosystem/types';
+import { ShareWithEcosystemModal } from './components/ecosystem/ShareWithEcosystemModal';
 
 export default function App() {
   const store = useModelerStore();
@@ -176,7 +186,6 @@ export default function App() {
     'hierarchy' | 'modifiers' | 'materials'
   >('hierarchy');
   const [dismissedNgonKey, setDismissedNgonKey] = useState<string | null>(null);
-  const [showEcosystemHub, setShowEcosystemHub] = useState(false);
   const [launcherProject, setLauncherProject] = useState<ProjectSummary | null>(null);
 
   // Import/Export workflow states & modals
@@ -886,6 +895,74 @@ export default function App() {
     });
   }, []);
 
+  // ── LOOPA Core: which ecosystem app is active and what each session changed ──
+  const lastAppIdRef = useRef<LoopaAppId>('modeler');
+  const activeAppId: LoopaAppId | null = (() => {
+    if (activeView === 'gallery') return null;
+    if (activeView === 'uv_editing') return 'uvs';
+    if (activeView === 'materials') return 'materials';
+    if (activeView === 'layout') return store.workMode === 'sculpt' ? 'sculpt' : 'modeler';
+    return lastAppIdRef.current;
+  })();
+  if (activeAppId) lastAppIdRef.current = activeAppId;
+
+  const projectRef = useRef(store.project);
+  projectRef.current = store.project;
+  const sessionRef = useRef<{
+    appId: LoopaAppId;
+    projectId: string;
+    baseline: ProjectSignature;
+  } | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+
+  /** Record what the current app session changed and start a fresh baseline. */
+  const commitEcosystemSession = useCallback((): SessionResult | null => {
+    const session = sessionRef.current;
+    const proj = projectRef.current;
+    if (!session || session.projectId !== proj.id) return null;
+    const result = finalizeAppSession(proj, session.appId, session.baseline);
+    sessionRef.current = { ...session, baseline: computeProjectSignature(proj) };
+    const appName = LOOPA_APPS[session.appId].name;
+    if (result.violations.length > 0) {
+      const labels = result.violations.map((d) => PROJECT_DOMAIN_LABELS[d]).join(', ');
+      store.showToast(
+        `Aviso de LOOPA Core: ${appName} modificó ${labels}, un área que pertenece a otra aplicación.`,
+      );
+    } else if (result.changed.includes('topology') && result.staleUvObjects.length > 0) {
+      const names = result.staleUvObjects.map((o) => o.name).slice(0, 3).join(', ');
+      store.showToast(
+        `La geometría de ${names} cambió después de editar sus UVs. Las UVs podrían necesitar actualización.`,
+      );
+    }
+    return result;
+  }, [store.showToast]);
+
+  useEffect(() => {
+    const session = sessionRef.current;
+    const projectId = store.project.id;
+    if (session && session.appId === activeAppId && session.projectId === projectId) return;
+    if (session && session.projectId === projectId) {
+      const result = commitEcosystemSession();
+      if (result) store.setEcosystemMeta(result.meta);
+    }
+    sessionRef.current = activeAppId
+      ? {
+          appId: activeAppId,
+          projectId,
+          baseline: computeProjectSignature(projectRef.current),
+        }
+      : null;
+    if (activeAppId === 'uvs') {
+      const stale = findStaleUvObjects(projectRef.current, projectRef.current.ecosystem);
+      if (stale.length > 0) {
+        store.showToast(
+          `Revisa las UVs de ${stale.map((o) => o.name).slice(0, 3).join(', ')}: su geometría cambió desde la última edición UV.`,
+        );
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAppId, store.project.id]);
+
   const handleChangeWorkspace = useCallback(
     (nextWorkspace: WorkspaceId) => {
       if (nextWorkspace === 'uv_editing') {
@@ -905,13 +982,18 @@ export default function App() {
     [store],
   );
 
+  /** Open the active project in one of the LOOPA apps. */
   const handleLaunchAppFromEcosystem = useCallback(
-    (appId: 'modeler' | 'sculpt' | 'uvs' | 'materials') => {
+    (appId: LoopaAppId) => {
       setLauncherProject(null);
+      if (appId === 'sculpt') {
+        if (store.enterAppWorkMode('sculpt')) {
+          enterModelerWithResetCamera();
+        }
+        return;
+      }
+      store.enterAppWorkMode('modeler');
       if (appId === 'modeler') {
-        enterModelerWithResetCamera();
-      } else if (appId === 'sculpt') {
-        store.toggleWorkMode('sculpt');
         enterModelerWithResetCamera();
       } else if (appId === 'uvs') {
         handleChangeWorkspace('uv_editing');
@@ -920,6 +1002,23 @@ export default function App() {
       }
     },
     [enterModelerWithResetCamera, handleChangeWorkspace, store],
+  );
+
+  /** "Compartir con LOOPA Ecosystem": save, then open the same project in another app. */
+  const handleShareWithEcosystem = useCallback(
+    async (target: LoopaAppId): Promise<boolean> => {
+      const result = commitEcosystemSession();
+      const meta =
+        result?.meta ?? store.project.ecosystem ?? createEmptyEcosystemMeta();
+      const thumb = viewportRef.current?.captureThumbnail() ?? undefined;
+      const saved = await store.saveProjectWithEcosystem(meta, thumb);
+      if (!saved) return false;
+      setShowShareModal(false);
+      handleLaunchAppFromEcosystem(target);
+      store.showToast(`"${store.project.name}" abierto en ${LOOPA_APPS[target].name}`);
+      return true;
+    },
+    [commitEcosystemSession, handleLaunchAppFromEcosystem, store],
   );
 
   const handleOpenProjectFromGallery = useCallback(
@@ -970,26 +1069,28 @@ export default function App() {
       return;
     }
     if (exitingToGallery) return;
+    const session = commitEcosystemSession();
+    const meta =
+      session?.meta ?? store.project.ecosystem ?? createEmptyEcosystemMeta();
     if (store.hasUnsavedChanges) {
       if (store.settings.autosaveEnabled) {
         setExitingToGallery(true);
-        const savedOk = await store.saveProjectSilent();
+        const savedOk = await store.saveProjectWithEcosystem(meta);
         setExitingToGallery(false);
         if (savedOk) {
           setActiveView('gallery');
           return;
         }
       }
+      store.setEcosystemMeta(meta);
       setShowReturnGuardModal(true);
       return;
     }
 
     const thumb = viewportRef.current?.captureThumbnail();
-    if (thumb) {
-      await store.saveProjectSilent(thumb);
-    }
+    await store.saveProjectWithEcosystem(meta, thumb ?? undefined);
     setActiveView('gallery');
-  }, [exitingToGallery, store]);
+  }, [commitEcosystemSession, exitingToGallery, store]);
 
   const handleExportNativeFromModeler = useCallback(async () => {
     if (DEMO_MODE) {
@@ -1502,7 +1603,8 @@ export default function App() {
           barhomeVisible={toolbarPrefs.barhomeVisible}
           onToggleBarhome={handleToggleBarhome}
           projectName={store.project.name}
-          onOpenEcosystemHub={() => setShowEcosystemHub(true)}
+          onOpenEcosystemHub={() => setShowShareModal(true)}
+          activeAppId={activeAppId ?? undefined}
           hasUnsavedChanges={store.hasUnsavedChanges}
           saveStatus={store.saveStatus}
           lastSaveError={store.lastSaveError}
@@ -2168,9 +2270,10 @@ export default function App() {
           onImportModelFiles={(files, targetFolderId) => {
             void handleGalleryModelFilesSelected(files, targetFolderId);
           }}
-          onOpenModeler={enterModelerWithResetCamera}
-          onOpenMaterials={() => handleChangeWorkspace('materials')}
-          onOpenUVs={() => handleChangeWorkspace('uv_editing')}
+          onOpenModeler={() => handleLaunchAppFromEcosystem('modeler')}
+          onOpenSculpt={() => handleLaunchAppFromEcosystem('sculpt')}
+          onOpenMaterials={() => handleLaunchAppFromEcosystem('materials')}
+          onOpenUVs={() => handleLaunchAppFromEcosystem('uvs')}
           onOpenTimelapse={(proj) => {
             setTimelapseTarget({ id: proj.id, name: proj.name });
           }}
@@ -2377,19 +2480,20 @@ export default function App() {
         />
       )}
 
-      <LoopaEcosystemHub
-        isOpen={showEcosystemHub}
-        onClose={() => setShowEcosystemHub(false)}
-        activeProjectId={store.project.id}
-        projectName={store.project.name}
-        objectCount={store.renderedObjects.length}
-        vertexCount={sceneStats.vertices}
-        faceCount={sceneStats.faces}
-        onOpenModeler={() => handleChangeWorkspace('layout')}
-        onOpenMaterials={() => handleChangeWorkspace('materials')}
-        onOpenUVs={() => handleChangeWorkspace('uv_editing')}
-        onToast={store.showToast}
-      />
+      {activeAppId && (
+        <ShareWithEcosystemModal
+          isOpen={showShareModal}
+          currentAppId={activeAppId}
+          projectName={store.project.name}
+          staleUvObjectNames={
+            showShareModal
+              ? findStaleUvObjects(store.project, store.project.ecosystem).map((o) => o.name)
+              : []
+          }
+          onClose={() => setShowShareModal(false)}
+          onShare={handleShareWithEcosystem}
+        />
+      )}
 
       <ProjectEcosystemLauncherModal
         project={launcherProject}

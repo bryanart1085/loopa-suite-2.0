@@ -1,3 +1,4 @@
+import { isLoopaAppId } from '../ecosystem/apps';
 import {
   cloneProjectForDuplicate,
   createDefaultScene,
@@ -771,6 +772,8 @@ function summarizeProject(
     folderId: project.folderId ?? null,
     thumbnailDataUrl: project.thumbnailDataUrl ?? null,
     ...(hasRecoveryDraft ? { hasRecoveryDraft: true } : {}),
+    ...(project.templateId ? { templateId: project.templateId } : {}),
+    ...(project.ecosystem?.lastAppId ? { lastAppId: project.ecosystem.lastAppId } : {}),
   };
 }
 
@@ -797,6 +800,8 @@ function normalizeSummary(raw: Partial<ProjectSummary>): ProjectSummary | null {
         ? raw.thumbnailDataUrl
         : null,
     ...(raw.hasRecoveryDraft ? { hasRecoveryDraft: true } : {}),
+    ...(typeof raw.templateId === 'string' ? { templateId: raw.templateId } : {}),
+    ...(isLoopaAppId(raw.lastAppId) ? { lastAppId: raw.lastAppId } : {}),
   };
 }
 

@@ -43,6 +43,10 @@ import {
 } from '../core/project/types';
 import type { CameraPreset } from '../engine/ViewportEngine';
 import { LoopaSymbol } from './BrandLogo';
+import { LoopaAppIcon } from './ecosystem/LoopaAppIcon';
+import { LOOPA_APPS } from '../core/ecosystem/apps';
+import type { LoopaAppId } from '../core/ecosystem/types';
+import { Share2 } from 'lucide-react';
 import {
   DISPLAY_MODES,
   getXrayDescriptor,
@@ -115,6 +119,7 @@ interface TopBarProps {
   timelapseRecordingActive?: boolean;
   timelapseStepCount?: number;
   onOpenEcosystemHub?: () => void;
+  activeAppId?: LoopaAppId;
 }
 
 const WORKSPACE_OPTIONS: {
@@ -210,6 +215,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   timelapseRecordingActive = false,
   timelapseStepCount = 0,
   onOpenEcosystemHub,
+  activeAppId,
 }) => {
   const [openMenu, setOpenMenu] = useState<{
     key: TopMenuKey;
@@ -395,15 +401,29 @@ export const TopBar: React.FC<TopBarProps> = ({
 
           {/* Right: Discreet Project Name + Save Status + Quick Hide */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              type="button"
-              onClick={onOpenEcosystemHub}
-              title="Abrir Ecosistema LOOPA (CORE)"
-              className="px-2.5 py-1 rounded-lg bg-[#182a1d] hover:bg-[#1e3825] border border-[#5ecd6e]/40 text-[#5ecd6e] text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0 shadow-sm"
-            >
-              <Cpu className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Ecosistema LOOPA</span>
-            </button>
+            {activeAppId && (
+              <span
+                className="hidden lg:flex items-center gap-1.5 text-xs font-semibold text-foreground shrink-0"
+                title={`Aplicación activa: ${LOOPA_APPS[activeAppId].name}`}
+              >
+                <LoopaAppIcon appId={activeAppId} className="w-3.5 h-3.5" />
+                {LOOPA_APPS[activeAppId].name}
+              </span>
+            )}
+            {!demoMode && (
+              <button
+                type="button"
+                data-testid="topbar-share-ecosystem-btn"
+                onClick={onOpenEcosystemHub}
+                title="Compartir con LOOPA Ecosystem"
+                aria-label="Compartir con LOOPA Ecosystem"
+                className="min-h-[32px] px-2.5 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/40 text-primary text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline xl:hidden">Compartir</span>
+                <span className="hidden xl:inline">Compartir con LOOPA Ecosystem</span>
+              </button>
+            )}
 
             <span
               className="hidden md:inline text-xs font-semibold text-[#d1d5db] truncate max-w-[160px]"

@@ -3,9 +3,25 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
-import { Box, Sparkles, Grid3X3, Palette, FolderOpen, Plus, Upload, Cpu, Layers, ShieldCheck, ArrowRight, Film, Trash2, Copy, Edit2, Search } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import {
+  ArrowRight,
+  Box,
+  Copy,
+  Cpu,
+  Edit2,
+  Film,
+  FolderOpen,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { LoopaSymbol } from './BrandLogo';
+import { LoopaAppBadge, LoopaAppIcon, APP_ACCENT } from './ecosystem/LoopaAppIcon';
+import { LOOPA_APP_ORDER, LOOPA_APPS } from '../core/ecosystem/apps';
+import type { LoopaAppId } from '../core/ecosystem/types';
+import { PROJECT_TEMPLATE_META } from '../core/project/thumbnail';
 import { ProjectSummary, ProjectFolder, ProjectRecoveryRecord } from '../core/project/types';
 
 interface LoopaEcosystemLandingProps {
@@ -22,10 +38,38 @@ interface LoopaEcosystemLandingProps {
   onApplyRecoveryDraft?: (record: ProjectRecoveryRecord) => void;
   onDiscardRecoveryDraft?: (projectId: string) => void;
   onOpenModeler: () => void;
+  onOpenSculpt: () => void;
   onOpenMaterials: () => void;
   onOpenUVs: () => void;
   onOpenTimelapse: (proj: ProjectSummary) => void;
   onNotify: (msg: string) => void;
+}
+
+export type GallerySortKey = 'updated' | 'created' | 'name';
+
+const SORT_LABELS: Record<GallerySortKey, string> = {
+  updated: 'Última modificación',
+  created: 'Fecha de creación',
+  name: 'Nombre (A–Z)',
+};
+
+export function sortProjects(projects: ProjectSummary[], key: GallerySortKey): ProjectSummary[] {
+  const list = [...projects];
+  if (key === 'name') {
+    list.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base', numeric: true }));
+  } else if (key === 'created') {
+    list.sort((a, b) => b.createdAt - a.createdAt);
+  } else {
+    list.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+  return list;
+}
+
+const dateFormatter = new Intl.DateTimeFormat('es', { dateStyle: 'medium', timeStyle: 'short' });
+
+function projectTypeLabel(p: ProjectSummary): string {
+  const template = p.templateId ? PROJECT_TEMPLATE_META[p.templateId]?.label : null;
+  return template ? `LOOPA · ${template}` : 'LOOPA · Personalizado';
 }
 
 export function LoopaEcosystemLanding({
@@ -42,126 +86,149 @@ export function LoopaEcosystemLanding({
   onApplyRecoveryDraft,
   onDiscardRecoveryDraft,
   onOpenModeler,
+  onOpenSculpt,
   onOpenMaterials,
   onOpenUVs,
   onOpenTimelapse,
-  onNotify,
 }: LoopaEcosystemLandingProps) {
-  // Default tab is 'gallery' so the user enters directly to the project gallery suite
   const [selectedTab, setSelectedTab] = useState<'gallery' | 'ecosystem'>('gallery');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortKey, setSortKey] = useState<GallerySortKey>('updated');
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
-  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<ProjectSummary | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const filteredProjects = projects.filter((p) => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFolder = selectedFolderId === null ? true : p.folderId === selectedFolderId;
-    return matchesSearch && matchesFolder;
-  });
+  const visibleProjects = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = projects.filter((p) => {
+      const matchesSearch = !q || p.name.toLowerCase().includes(q);
+      const matchesFolder = selectedFolderId === null ? true : p.folderId === selectedFolderId;
+      return matchesSearch && matchesFolder;
+    });
+    return sortProjects(filtered, sortKey);
+  }, [projects, searchQuery, selectedFolderId, sortKey]);
+
+  const openHandlers: Record<LoopaAppId, () => void> = {
+    modeler: onOpenModeler,
+    sculpt: onOpenSculpt,
+    uvs: onOpenUVs,
+    materials: onOpenMaterials,
+  };
+
+  const commitRename = (id: string) => {
+    const name = editNameValue.trim();
+    if (name) onRenameProject(id, name);
+    setEditingProjectId(null);
+  };
 
   return (
-    <div className="absolute inset-0 z-50 bg-[#0d0f14] text-white flex flex-col overflow-y-auto select-none">
-      
-      {/* Top Suite Navbar */}
-      <header className="sticky top-0 z-25 bg-[#12141c]/95 backdrop-blur-md border-b border-white/10 px-6 py-4 flex items-center justify-between shadow-xl">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#5ecd6e] to-[#22c55e] flex items-center justify-center shadow-lg shadow-[#5ecd6e]/20">
-            <LoopaSymbol className="w-6 h-6 text-black" />
+    <div className="absolute inset-0 z-50 bg-background text-foreground flex flex-col overflow-y-auto select-none">
+      {/* Suite header */}
+      <header className="sticky top-0 z-20 bg-surface/95 backdrop-blur-md border-b border-border px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shrink-0">
+            <LoopaSymbol className="w-6 h-6 text-primary-foreground" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-extrabold tracking-wider text-white">LOOPA SUITE</h1>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#5ecd6e]/20 text-[#5ecd6e] border border-[#5ecd6e]/30">
-                CORE v1.9
-              </span>
-            </div>
-            <p className="text-xs text-white/50">Ecosistema 3D profesional y gestor de proyectos</p>
+          <div className="min-w-0">
+            <h1 className="text-base sm:text-lg font-extrabold tracking-wider">LOOPA SUITE</h1>
+            <p className="text-xs text-muted-foreground truncate">Galería de proyectos del ecosistema 3D</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex bg-[#181b25] p-1 rounded-xl border border-white/10">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <div className="flex bg-surface-raised p-1 rounded-xl border border-border" role="tablist">
             <button
+              role="tab"
+              aria-selected={selectedTab === 'gallery'}
               onClick={() => setSelectedTab('gallery')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                selectedTab === 'gallery'
-                  ? 'bg-[#5ecd6e] text-black shadow-md shadow-[#5ecd6e]/20'
-                  : 'text-white/60 hover:text-white'
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
+                selectedTab === 'gallery' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <FolderOpen className="w-3.5 h-3.5" /> Galería de Proyectos ({projects.length})
+              <FolderOpen className="w-3.5 h-3.5" /> Proyectos ({projects.length})
             </button>
             <button
+              role="tab"
+              aria-selected={selectedTab === 'ecosystem'}
               onClick={() => setSelectedTab('ecosystem')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                selectedTab === 'ecosystem'
-                  ? 'bg-[#5ecd6e] text-black shadow-md shadow-[#5ecd6e]/20'
-                  : 'text-white/60 hover:text-white'
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
+                selectedTab === 'ecosystem' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Cpu className="w-3.5 h-3.5" /> Ecosistema & Módulos
+              <Cpu className="w-3.5 h-3.5" /> Aplicaciones
             </button>
           </div>
 
           <button
             onClick={onCreateProjectModal}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#5ecd6e] hover:bg-[#5ecd6e]/90 text-black text-xs font-bold shadow-lg shadow-[#5ecd6e]/20 transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-bold transition-colors"
           >
-            <Plus className="w-4 h-4" /> Nuevo Proyecto
+            <Plus className="w-4 h-4" /> Nuevo proyecto
           </button>
         </div>
       </header>
 
-      {/* Main Suite Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 flex flex-col gap-6">
-
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 md:p-8 flex flex-col gap-5">
         {selectedTab === 'gallery' ? (
           <>
-            {/* Gallery Control Bar */}
-            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-[#151821] border border-white/10 rounded-2xl p-4 shadow-lg">
-              
-              {/* Search & Folders */}
-              <div className="flex flex-wrap items-center gap-3 flex-1">
-                <div className="relative flex-1 min-w-[220px]">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Buscar proyectos en la galería..."
-                    className="w-full bg-[#12141c] border border-white/10 focus:border-[#5ecd6e] rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-white/30 outline-none transition-colors"
-                  />
-                </div>
-
-                <div className="flex items-center gap-1 bg-[#12141c] border border-white/10 rounded-xl p-1">
-                  <button
-                    onClick={() => setSelectedFolderId(null)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                      selectedFolderId === null ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white'
-                    }`}
-                  >
-                    Todos
-                  </button>
-                  {folders.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => setSelectedFolderId(f.id)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        selectedFolderId === f.id ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white'
-                      }`}
-                    >
-                      {f.name}
-                    </button>
-                  ))}
-                </div>
+            {/* Controls */}
+            <div className="flex flex-col lg:flex-row lg:items-center gap-3 bg-surface border border-border rounded-2xl p-3 sm:p-4">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar proyectos…"
+                  aria-label="Buscar proyectos"
+                  className="w-full bg-background border border-border focus:border-primary rounded-xl pl-10 pr-4 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none transition-colors"
+                />
               </div>
 
-              {/* Import 3D button */}
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="whitespace-nowrap">Ordenar por</span>
+                  <select
+                    value={sortKey}
+                    onChange={(e) => setSortKey(e.target.value as GallerySortKey)}
+                    aria-label="Ordenar proyectos"
+                    className="bg-background border border-border focus:border-primary rounded-xl px-3 py-2 text-xs text-foreground outline-none"
+                  >
+                    {(Object.keys(SORT_LABELS) as GallerySortKey[]).map((k) => (
+                      <option key={k} value={k}>
+                        {SORT_LABELS[k]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {folders.length > 0 && (
+                  <div className="flex items-center gap-1 bg-background border border-border rounded-xl p-1 overflow-x-auto max-w-full">
+                    <button
+                      onClick={() => setSelectedFolderId(null)}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap ${
+                        selectedFolderId === null ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Todos
+                    </button>
+                    {folders.map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() => setSelectedFolderId(f.id)}
+                        className={`px-3 py-1 rounded-lg text-xs font-medium whitespace-nowrap ${
+                          selectedFolderId === f.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {f.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -176,30 +243,29 @@ export function LoopaEcosystemLanding({
                 />
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all border border-white/10"
+                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-surface-raised hover:bg-accent border border-border text-foreground text-xs font-semibold transition-colors"
                 >
-                  <Upload className="w-4 h-4" /> Importar Modelo 3D
+                  <Upload className="w-4 h-4" /> Importar modelo 3D
                 </button>
               </div>
             </div>
 
-            {/* Recovery Drafts alert if any */}
             {startupRecoveryList.length > 0 && onApplyRecoveryDraft && onDiscardRecoveryDraft && (
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex items-center justify-between gap-4">
+              <div className="bg-warning/10 border border-warning/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h4 className="text-sm font-bold text-amber-300">Borrador de recuperación disponible</h4>
-                  <p className="text-xs text-white/60">Se detectó una sesión previa interrumpida que puedes recuperar.</p>
+                  <h4 className="text-sm font-bold text-warning">Borrador de recuperación disponible</h4>
+                  <p className="text-xs text-muted-foreground">Se detectó una sesión previa interrumpida que puedes recuperar.</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => onApplyRecoveryDraft(startupRecoveryList[0])}
-                    className="px-3 py-1.5 rounded-lg bg-amber-500 text-black text-xs font-bold hover:bg-amber-400 transition-colors"
+                    className="px-3 py-1.5 rounded-lg bg-warning text-warning-foreground text-xs font-bold"
                   >
                     Recuperar
                   </button>
                   <button
                     onClick={() => onDiscardRecoveryDraft(startupRecoveryList[0].projectId)}
-                    className="px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs font-medium hover:bg-white/20 transition-colors"
+                    className="px-3 py-1.5 rounded-lg bg-accent text-foreground text-xs font-medium"
                   >
                     Descartar
                   </button>
@@ -207,244 +273,251 @@ export function LoopaEcosystemLanding({
               </div>
             )}
 
-            {/* Projects Grid */}
-            {filteredProjects.length === 0 ? (
-              <div className="bg-[#151821] border border-white/10 rounded-3xl p-16 text-center flex flex-col items-center justify-center gap-4 shadow-xl my-auto">
-                <FolderOpen className="w-12 h-12 text-white/30" />
-                <h3 className="text-lg font-bold text-white">No se encontraron proyectos</h3>
-                <p className="text-xs text-white/50 max-w-sm">
-                  Crea un nuevo proyecto en blanco o importa un archivo 3D (.obj, .stl, .glb) para comenzar.
-                </p>
-                <button
-                  onClick={onCreateProjectModal}
-                  className="px-5 py-2.5 rounded-xl bg-[#5ecd6e] text-black text-xs font-bold mt-2 shadow-lg shadow-[#5ecd6e]/20"
-                >
-                  Crear Proyecto Nuevo
-                </button>
+            {visibleProjects.length === 0 ? (
+              <div className="bg-surface border border-border rounded-3xl p-10 sm:p-16 text-center flex flex-col items-center justify-center gap-4 my-auto">
+                <FolderOpen className="w-12 h-12 text-muted-foreground" />
+                {projects.length === 0 ? (
+                  <>
+                    <h3 className="text-lg font-bold">Todavía no hay proyectos</h3>
+                    <p className="text-xs text-muted-foreground max-w-sm">
+                      Crea un proyecto nuevo o importa un archivo 3D (.obj, .stl, .glb) para empezar.
+                    </p>
+                    <button
+                      onClick={onCreateProjectModal}
+                      className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold mt-2"
+                    >
+                      Crear proyecto nuevo
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-lg font-bold">Sin resultados</h3>
+                    <p className="text-xs text-muted-foreground max-w-sm">
+                      Ningún proyecto coincide con la búsqueda o la carpeta seleccionada.
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                {filteredProjects.map((proj) => {
-                  const isSelected = selectedProjectIds.has(proj.id);
+              <ul className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4" aria-label="Proyectos">
+                {visibleProjects.map((proj) => {
                   const isEditing = editingProjectId === proj.id;
-
+                  const isActive = proj.id === activeProjectId;
                   return (
-                    <div
+                    <li
                       key={proj.id}
-                      onClick={() => void onOpenProject(proj.id)}
-                      className={`bg-[#151821] hover:bg-[#1a1f2b] border rounded-2xl p-5 cursor-pointer transition-all flex flex-col justify-between gap-5 group shadow-xl relative ${
-                        isSelected ? 'border-[#5ecd6e] ring-1 ring-[#5ecd6e]' : 'border-white/10 hover:border-[#5ecd6e]/40'
-                      }`}
+                      data-testid="gallery-project-card"
+                      className="group bg-surface hover:bg-surface-raised border border-border hover:border-primary/40 rounded-2xl overflow-hidden flex flex-col transition-colors"
                     >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] text-white/40 font-mono">
-                            {new Date(proj.updatedAt).toLocaleDateString()}
+                      <button
+                        type="button"
+                        onClick={() => void onOpenProject(proj.id)}
+                        className="relative block aspect-[4/3] bg-background overflow-hidden"
+                        aria-label={`Abrir ${proj.name}`}
+                      >
+                        {proj.thumbnailDataUrl ? (
+                          <img
+                            src={proj.thumbnailDataUrl}
+                            alt={`Vista previa de ${proj.name}`}
+                            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                            draggable={false}
+                          />
+                        ) : (
+                          <span className="w-full h-full flex items-center justify-center">
+                            <Box className="w-10 h-10 text-muted-foreground" />
                           </span>
-                          <span className="text-[10px] bg-white/5 px-2.5 py-0.5 rounded text-white/70 font-medium">
-                            {proj.objectCount} obj
+                        )}
+                        {proj.lastAppId && (
+                          <span
+                            className="absolute left-2 top-2 flex items-center gap-1.5 rounded-lg bg-scrim px-2 py-1 text-[10px] font-semibold text-foreground"
+                            title={`Última aplicación: ${LOOPA_APPS[proj.lastAppId].name}`}
+                          >
+                            <LoopaAppIcon appId={proj.lastAppId} className="w-3 h-3" />
+                            {LOOPA_APPS[proj.lastAppId].tagline}
                           </span>
-                        </div>
+                        )}
+                        {isActive && (
+                          <span className="absolute right-2 top-2 rounded-lg bg-primary px-2 py-1 text-[10px] font-bold text-primary-foreground">
+                            Activo
+                          </span>
+                        )}
+                      </button>
 
+                      <div className="p-3.5 flex flex-col gap-2 flex-1">
                         {isEditing ? (
-                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-1">
                             <input
                               type="text"
                               value={editNameValue}
                               onChange={(e) => setEditNameValue(e.target.value)}
-                              className="w-full bg-[#12141c] border border-[#5ecd6e] rounded px-2 py-1 text-xs text-white outline-none"
+                              aria-label="Nuevo nombre del proyecto"
+                              className="w-full bg-background border border-primary rounded px-2 py-1 text-xs text-foreground outline-none"
                               autoFocus
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  if (editNameValue.trim()) {
-                                    onRenameProject(proj.id, editNameValue.trim());
-                                  }
-                                  setEditingProjectId(null);
-                                } else if (e.key === 'Escape') {
-                                  setEditingProjectId(null);
-                                }
+                                if (e.key === 'Enter') commitRename(proj.id);
+                                else if (e.key === 'Escape') setEditingProjectId(null);
                               }}
                             />
                             <button
-                              onClick={() => {
-                                if (editNameValue.trim()) {
-                                  onRenameProject(proj.id, editNameValue.trim());
-                                }
-                                setEditingProjectId(null);
-                              }}
-                              className="px-2 py-1 bg-[#5ecd6e] text-black text-xs font-bold rounded"
+                              onClick={() => commitRename(proj.id)}
+                              className="px-2 py-1 bg-primary text-primary-foreground text-xs font-bold rounded"
                             >
                               OK
                             </button>
                           </div>
                         ) : (
-                          <h4 className="text-base font-bold text-white group-hover:text-[#5ecd6e] transition-colors truncate">
+                          <h4 className="text-sm font-bold truncate" title={proj.name}>
                             {proj.name}
                           </h4>
                         )}
-                      </div>
 
-                      <div className="flex items-center justify-between pt-3 border-t border-white/10">
-                        <span className="text-xs text-[#5ecd6e] font-semibold flex items-center gap-1">
-                          Abrir Proyecto <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                        </span>
-                        
-                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <p className="text-[11px] text-muted-foreground">
+                          Modificado {dateFormatter.format(proj.updatedAt)}
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className="text-[10px] bg-accent px-2 py-0.5 rounded text-muted-foreground font-medium">
+                            {projectTypeLabel(proj)}
+                          </span>
+                          <span className="text-[10px] bg-accent px-2 py-0.5 rounded text-muted-foreground font-medium">
+                            {proj.objectCount} {proj.objectCount === 1 ? 'objeto' : 'objetos'}
+                          </span>
+                        </div>
+
+                        <div className="mt-auto pt-2.5 border-t border-border flex items-center justify-between">
                           <button
-                            onClick={() => {
-                              setEditingProjectId(proj.id);
-                              setEditNameValue(proj.name);
-                            }}
-                            className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-                            title="Renombrar"
+                            type="button"
+                            onClick={() => void onOpenProject(proj.id)}
+                            className="text-xs text-primary font-semibold flex items-center gap-1"
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
+                            Abrir <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
                           </button>
-                          <button
-                            onClick={() => onDuplicateProject(proj.id)}
-                            className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-                            title="Duplicar"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => onOpenTimelapse(proj)}
-                            className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-                            title="Timelapse"
-                          >
-                            <Film className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => onDeleteProjects([proj.id])}
-                            className="p-1.5 rounded-lg text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                            title="Eliminar"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              onClick={() => {
+                                setEditingProjectId(proj.id);
+                                setEditNameValue(proj.name);
+                              }}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent"
+                              title="Renombrar"
+                              aria-label={`Renombrar ${proj.name}`}
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => onDuplicateProject(proj.id)}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent"
+                              title="Duplicar"
+                              aria-label={`Duplicar ${proj.name}`}
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => onOpenTimelapse(proj)}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent"
+                              title="Timelapse"
+                              aria-label={`Timelapse de ${proj.name}`}
+                            >
+                              <Film className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setPendingDelete(proj)}
+                              className="p-1.5 rounded-lg text-destructive/70 hover:text-destructive hover:bg-destructive/10"
+                              title="Eliminar"
+                              aria-label={`Eliminar ${proj.name}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             )}
           </>
         ) : (
-          /* Ecosystem & Modules Suite Overview Tab */
-          <div className="space-y-8 animate-fadeIn">
-            <div className="bg-gradient-to-r from-[#18231c] via-[#151c24] to-[#12141c] border border-white/10 rounded-3xl p-8 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-8">
-              <div className="space-y-4 max-w-2xl">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#5ecd6e]/10 border border-[#5ecd6e]/30 text-[#5ecd6e] text-xs font-semibold">
-                  <Cpu className="w-3.5 h-3.5" /> LOOPA CORE Arquitectura Central
-                </div>
-                <h2 className="text-3xl font-extrabold text-white tracking-tight">
-                  Ecosistema de Aplicaciones 3D Especializadas
-                </h2>
-                <p className="text-sm text-white/60 leading-relaxed">
-                  LOOPA CORE gestiona un único proyecto centralizado. Selecciona cualquier módulo especializado para trabajar con las mallas, materiales y escenas sin pérdida de datos.
-                </p>
+          <div className="space-y-6">
+            <div className="bg-surface border border-border rounded-3xl p-6 sm:p-8">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/30 text-primary text-xs font-semibold">
+                <Cpu className="w-3.5 h-3.5" /> LOOPA Core
               </div>
-              <div className="bg-[#12141c] border border-white/10 rounded-2xl p-6 shadow-xl flex flex-col gap-3 min-w-[240px]">
-                <div className="flex items-center justify-between text-xs text-white/50">
-                  <span>Módulos Activos</span>
-                  <span className="text-[#5ecd6e] font-bold">4 / 4</span>
-                </div>
-                <div className="flex items-center justify-between text-xs text-white/50">
-                  <span>Estado del Core</span>
-                  <span className="text-emerald-400 font-medium flex items-center gap-1"><ShieldCheck className="w-3.5 h-3.5" /> Sincronizado</span>
-                </div>
-              </div>
+              <h2 className="mt-3 text-2xl sm:text-3xl font-extrabold tracking-tight">Cuatro aplicaciones, un mismo proyecto</h2>
+              <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
+                Cada aplicación trabaja solo sobre sus datos. Usa «Compartir con LOOPA Ecosystem» para pasar el proyecto
+                abierto de una a otra sin crear copias.
+              </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              
-              {/* LOOPA Modeler */}
-              <div 
-                onClick={onOpenModeler}
-                className="bg-[#151821] hover:bg-[#1a1f2b] border border-emerald-500/30 hover:border-emerald-500/70 rounded-2xl p-6 flex flex-col justify-between transition-all cursor-pointer shadow-xl group"
-              >
-                <div>
-                  <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-4 group-hover:scale-110 transition-transform">
-                    <Box className="w-6 h-6" />
-                  </div>
-                  <h3 className="text-lg font-bold text-white mb-1">LOOPA Modeler</h3>
-                  <p className="text-xs text-white/60 leading-relaxed">
-                    Modelado poligonal 3D, extrusiones, biseles, cortes de bucle y modificadores.
-                  </p>
-                </div>
-                <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-emerald-400 font-semibold">
-                  <span>Abrir Modeler</span> <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </div>
-              </div>
-
-              {/* LOOPA Sculpt */}
-              <div 
-                onClick={() => onNotify('LOOPA Sculpt está integrado en CORE y listo para escultura digital.')}
-                className="bg-[#151821] hover:bg-[#1a1f2b] border border-white/10 hover:border-purple-500/40 rounded-2xl p-6 flex flex-col justify-between transition-all cursor-pointer shadow-xl group"
-              >
-                <div>
-                  <div className="w-12 h-12 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 mb-4 group-hover:scale-110 transition-transform">
-                    <Sparkles className="w-6 h-6" />
-                  </div>
-                  <h3 className="text-lg font-bold text-white mb-1">LOOPA Sculpt</h3>
-                  <p className="text-xs text-white/60 leading-relaxed">
-                    Escultura digital de alta densidad, arcilla, inflado, suavizado y simetría.
-                  </p>
-                </div>
-                <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-purple-400 font-semibold">
-                  <span>Explorar Módulo</span> <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </div>
-              </div>
-
-              {/* LOOPA UVs */}
-              <div 
-                onClick={onOpenUVs}
-                className="bg-[#151821] hover:bg-[#1a1f2b] border border-white/10 hover:border-sky-500/40 rounded-2xl p-6 flex flex-col justify-between transition-all cursor-pointer shadow-xl group"
-              >
-                <div>
-                  <div className="w-12 h-12 rounded-xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400 mb-4 group-hover:scale-110 transition-transform">
-                    <Grid3X3 className="w-6 h-6" />
-                  </div>
-                  <h3 className="text-lg font-bold text-white mb-1">LOOPA UVs</h3>
-                  <p className="text-xs text-white/60 leading-relaxed">
-                    Desarrollo de mapas UV, marcado de costuras y visor 2D interactivo.
-                  </p>
-                </div>
-                <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-sky-400 font-semibold">
-                  <span>Abrir UVs</span> <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </div>
-              </div>
-
-              {/* LOOPA Materiales */}
-              <div 
-                onClick={onOpenMaterials}
-                className="bg-[#151821] hover:bg-[#1a1f2b] border border-white/10 hover:border-amber-500/40 rounded-2xl p-6 flex flex-col justify-between transition-all cursor-pointer shadow-xl group"
-              >
-                <div>
-                  <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-4 group-hover:scale-110 transition-transform">
-                    <Palette className="w-6 h-6" />
-                  </div>
-                  <h3 className="text-lg font-bold text-white mb-1">LOOPA Materiales</h3>
-                  <p className="text-xs text-white/60 leading-relaxed">
-                    Administración de materiales PBR, color base, rugosidad y texturas.
-                  </p>
-                </div>
-                <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between text-xs text-amber-400 font-semibold">
-                  <span>Abrir Materiales</span> <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </div>
-              </div>
-
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {LOOPA_APP_ORDER.map((id) => {
+                const app = LOOPA_APPS[id];
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={openHandlers[id]}
+                    className={`group text-left bg-surface hover:bg-surface-raised border border-border ${APP_ACCENT[id].hoverBorder} rounded-2xl p-5 flex flex-col justify-between gap-6 transition-colors`}
+                  >
+                    <div>
+                      <LoopaAppBadge appId={id} />
+                      <h3 className="mt-4 text-base font-bold">{app.name}</h3>
+                      <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{app.description}</p>
+                    </div>
+                    <span className={`pt-3 border-t border-border flex items-center justify-between text-xs font-semibold ${APP_ACCENT[id].text}`}>
+                      Abrir con el proyecto activo
+                      <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
-
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-white/10 bg-[#12141c] px-6 py-4 text-center text-xs text-white/40">
-        LOOPA Suite &copy; 2026 — Arquitectura Central LOOPA CORE
+      <footer className="border-t border-border bg-surface px-6 py-3 text-center text-xs text-muted-foreground">
+        LOOPA Suite © 2026 — LOOPA Core
       </footer>
 
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-scrim p-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="loopa-delete-title"
+          onClick={() => setPendingDelete(null)}
+        >
+          <div
+            className="w-full max-w-sm bg-surface border border-border rounded-2xl p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="loopa-delete-title" className="text-sm font-bold">
+              ¿Eliminar «{pendingDelete.name}»?
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              El proyecto se eliminará de este dispositivo en todas las aplicaciones de LOOPA. No se puede deshacer.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setPendingDelete(null)}
+                className="px-3.5 py-2 rounded-lg bg-accent text-foreground text-xs font-semibold"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  onDeleteProjects([pendingDelete.id]);
+                  setPendingDelete(null);
+                }}
+                className="px-3.5 py-2 rounded-lg bg-destructive text-destructive-foreground text-xs font-bold"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
