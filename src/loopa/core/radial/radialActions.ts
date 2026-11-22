@@ -13,7 +13,6 @@ export type RadialLayoutScope =
 export type RadialActionCategoryId =
   | 'barhome_file'
   | 'barhome_viewport'
-  | 'barhome_windows'
   | 'navigation'
   | 'selection'
   | 'transform'
@@ -40,11 +39,6 @@ export const RADIAL_ACTION_CATEGORIES: RadialCategoryMeta[] = [
   {
     id: 'barhome_viewport',
     label: 'BARHOME · Vistas y visualización',
-    menuKinds: ['barhome'],
-  },
-  {
-    id: 'barhome_windows',
-    label: 'BARHOME · Ventanas y espacios',
     menuKinds: ['barhome'],
   },
   {
@@ -129,12 +123,6 @@ export type RadialActionId =
   | 'barhome_toggle_axes'
   | 'barhome_toggle_liner'
   | 'barhome_toggle_barhome'
-  // BARHOME · Ventanas
-  | 'barhome_open_windows_menu'
-  | 'ws_layout'
-  | 'ws_uv_editing'
-  | 'ws_timelapse'
-  | 'ws_materials'
   // Navegación
   | 'focus_camera'
   | 'view_iso'
@@ -255,11 +243,6 @@ export type RadialIconKey =
   | 'axes'
   | 'liner'
   | 'barhome'
-  | 'windows_menu'
-  | 'ws_layout'
-  | 'ws_uv'
-  | 'ws_timelapse'
-  | 'ws_materials'
   | 'g_move'
   | 'select_connected'
   | 'apply_transform'
@@ -645,59 +628,6 @@ export const RADIAL_ACTION_LIBRARY: RadialActionDefinition[] = [
   },
 
   // =========================================================================
-  // BARHOME · Ventanas y espacios de trabajo
-  // =========================================================================
-  {
-    id: 'barhome_open_windows_menu',
-    label: 'Ventanas (selector)',
-    shortLabel: 'Ventanas',
-    description: 'Selector rápido para cambiar entre Layout, Editor UV, Timelapse y Materiales',
-    category: 'barhome_windows',
-    icon: 'windows_menu',
-    menuKinds: ['barhome'],
-    supportedScopes: ['barhome'],
-  },
-  {
-    id: 'ws_layout',
-    label: 'Abrir Layout',
-    shortLabel: 'Layout',
-    description: 'Cambia al espacio de trabajo Layout 3D',
-    category: 'barhome_windows',
-    icon: 'ws_layout',
-    menuKinds: ['barhome'],
-    supportedScopes: ['barhome'],
-  },
-  {
-    id: 'ws_uv_editing',
-    label: 'Abrir Editor UV',
-    shortLabel: 'Editor UV',
-    description: 'Abre el espacio de trabajo Editor de UVs',
-    category: 'barhome_windows',
-    icon: 'ws_uv',
-    menuKinds: ['barhome'],
-    supportedScopes: ['barhome'],
-  },
-  {
-    id: 'ws_timelapse',
-    label: 'Abrir Timelapse',
-    shortLabel: 'Timelapse',
-    description: 'Abre la reproducción de Timelapse y exportación MP4',
-    category: 'barhome_windows',
-    icon: 'ws_timelapse',
-    menuKinds: ['barhome'],
-    supportedScopes: ['barhome'],
-  },
-  {
-    id: 'ws_materials',
-    label: 'Abrir Editor de materiales',
-    shortLabel: 'Materiales',
-    description: 'Abre el espacio de trabajo de Materiales PBR',
-    category: 'barhome_windows',
-    icon: 'ws_materials',
-    menuKinds: ['barhome'],
-    supportedScopes: ['barhome'],
-  },
-
   // =========================================================================
   // Navegación 3D (compartido BARHOME y Herramientas)
   // =========================================================================
@@ -1688,7 +1618,7 @@ export const DEFAULT_BARHOME_RADIAL_LAYOUT: RadialSlotList = [
   'barhome_open_export_menu',
   'barhome_open_views_menu',
   'barhome_open_display_menu',
-  'barhome_open_windows_menu',
+  'barhome_return_gallery',
   'barhome_new_project',
 ];
 

@@ -32,6 +32,7 @@ import {
   UVWorkspaceHandle,
 } from './components/UVWorkspace';
 import { Viewport3D, Viewport3DHandle } from './components/Viewport3D';
+import { WorkspaceQuickControls } from './components/WorkspaceQuickControls';
 import { EditableMesh } from './core/mesh/EditableMesh';
 import { subdivideMesh } from './core/mesh/advancedOperations';
 import {
@@ -67,6 +68,7 @@ import {
   ReferenceImageOrientation,
   SceneObjectData,
   TouchModifierState,
+  WorkMode,
 } from './core/project/types';
 import { getAppDocumentTitle } from './config/brand';
 import { DEMO_MODE } from './config/demo';
@@ -83,13 +85,15 @@ import {
 } from './core/ecosystem/signatures';
 import type { LoopaAppId } from './core/ecosystem/types';
 import { ShareWithEcosystemModal } from './components/ecosystem/ShareWithEcosystemModal';
-import { EcosystemSwitchButton } from './components/ecosystem/EcosystemSwitchButton';
 
 export default function App() {
   const store = useModelerStore();
 
   const [activeView, setActiveView] = useState<'gallery' | WorkspaceId>(
     DEMO_MODE ? 'layout' : 'gallery',
+  );
+  const [modelingAppId, setModelingAppId] = useState<'modeler' | 'sculpt'>(
+    'modeler',
   );
   const [showReturnGuardModal, setShowReturnGuardModal] = useState(false);
   const [exitingToGallery, setExitingToGallery] = useState(false);
@@ -118,7 +122,7 @@ export default function App() {
     }));
   }, [updateToolbarPrefs]);
 
-  const handleCycleLeftToolbarMode = useCallback(() => {
+  const handleToggleLeftToolbar = useCallback(() => {
     updateToolbarPrefs((prev) => ({
       ...prev,
       leftToolbarMode: getNextLeftToolbarDisplayMode(prev.leftToolbarMode),
@@ -126,6 +130,13 @@ export default function App() {
   }, [updateToolbarPrefs]);
 
   const handleToggleLiner = useCallback(() => {
+    if (activeView === 'uv_editing') {
+      updateToolbarPrefs((prev) => ({
+        ...prev,
+        linerVisible: !prev.linerVisible,
+      }));
+      return;
+    }
     if (activeView !== 'layout' && activeView !== 'gallery') {
       updateToolbarPrefs((prev) => ({ ...prev, linerVisible: true }));
       setActiveView('layout');
@@ -183,9 +194,9 @@ export default function App() {
     id: string;
     transform: ObjectTransform;
   } | null>(null);
-  const [linerTab, setLinerTab] = useState<
-    'hierarchy' | 'modifiers' | 'materials'
-  >('hierarchy');
+  const [linerTab, setLinerTab] = useState<'hierarchy' | 'modifiers'>(
+    'hierarchy',
+  );
   const [dismissedNgonKey, setDismissedNgonKey] = useState<string | null>(null);
   const [launcherProject, setLauncherProject] = useState<ProjectSummary | null>(null);
 
@@ -911,7 +922,9 @@ export default function App() {
     if (activeView === 'gallery') return null;
     if (activeView === 'uv_editing') return 'uvs';
     if (activeView === 'materials') return 'materials';
-    if (activeView === 'layout') return store.workMode === 'sculpt' ? 'sculpt' : 'modeler';
+    if (activeView === 'layout') {
+      return store.workMode === 'sculpt' ? 'sculpt' : modelingAppId;
+    }
     return lastAppIdRef.current;
   })();
   if (activeAppId) lastAppIdRef.current = activeAppId;
@@ -1005,10 +1018,12 @@ export default function App() {
       setLauncherProject(null);
       if (appId === 'sculpt') {
         if (store.enterAppWorkMode('sculpt')) {
+          setModelingAppId('sculpt');
           enterModelerWithResetCamera();
         }
         return;
       }
+      setModelingAppId('modeler');
       store.enterAppWorkMode('modeler');
       if (appId === 'modeler') {
         enterModelerWithResetCamera();
@@ -1039,6 +1054,16 @@ export default function App() {
       return true;
     },
     [captureVisibleThumbnail, commitEcosystemSession, handleLaunchAppFromEcosystem, store],
+  );
+
+  const handleSharedWorkModeChange = useCallback(
+    (mode: WorkMode) => {
+      if (activeView === 'layout' && activeAppId === 'sculpt') {
+        setModelingAppId('sculpt');
+      }
+      store.toggleWorkMode(mode);
+    },
+    [activeAppId, activeView, store],
   );
 
   const handleOpenProjectFromGallery = useCallback(
@@ -1542,13 +1567,86 @@ export default function App() {
       return `${leftClass} ${rightClass}`;
     }
     if (activeView === 'materials') {
-      return 'left-80 right-0';
+      return toolbarPrefs.leftToolbarMode === 'hidden'
+        ? 'left-0 right-0'
+        : 'left-80 right-0';
     }
     if (activeView === 'uv_editing') {
-      return 'left-0 md:left-72 right-0';
+      const leftClass = toolbarPrefs.leftToolbarMode === 'hidden'
+        ? 'left-0 right-0'
+        : 'left-0 md:left-64';
+      const rightClass = toolbarPrefs.linerVisible
+        ? 'right-[min(272px,78vw)] sm:right-72'
+        : 'right-0';
+      return `${leftClass} ${rightClass}`;
     }
     return 'left-0 right-0';
   }, [activeView, toolbarPrefs.leftToolbarMode, toolbarPrefs.linerVisible]);
+
+  const renderLinerPanel = (isOpen: boolean) => (
+    <LinerPanel
+      isOpen={isOpen}
+      scenes={store.scenes}
+      activeSceneId={store.activeSceneId}
+      activeCollectionId={store.activeCollectionId}
+      objects={store.renderedObjects}
+      selectedObjectId={store.selectedObjectId}
+      selectedObjectIds={store.selectedObjectIds}
+      workMode={store.workMode}
+      editSelectionMode={store.editSelectionMode}
+      selectedComponentIds={store.selectedComponentIds}
+      liveTransformOverride={liveTransformOverride}
+      onSelectObjectInScene={store.selectObjectInScene}
+      onRenameObject={store.renameObject}
+      onDuplicateObject={store.duplicateObjectById}
+      onToggleVisibility={store.toggleObjectVisibility}
+      onToggleLock={store.toggleObjectLock}
+      onDeleteObject={store.deleteObject}
+      onUpdateObjectTransform={store.updateObjectTransform}
+      onUpdateEditCentroidAxis={store.updateSelectedVerticesPosition}
+      onCreateScene={() => store.createScene()}
+      onSwitchScene={store.switchScene}
+      onRenameScene={store.renameScene}
+      onDeleteScene={store.deleteScene}
+      onCreateCollection={store.createCollection}
+      onSelectCollection={store.selectCollection}
+      onRenameCollection={store.renameCollection}
+      onToggleCollectionExpanded={store.toggleCollectionExpanded}
+      onDeleteCollection={store.deleteCollection}
+      onMoveObjectToCollection={store.moveObjectToCollection}
+      onUpdateReferenceImageProps={store.updateReferenceImageProps}
+      onUpdateLightProps={store.updateLightProps}
+      modifierDiagnostics={store.selectedModifierDiagnostics.diagnostics}
+      evaluatedVertexCount={store.selectedModifierDiagnostics.evaluatedVertexCount}
+      evaluatedFaceCount={store.selectedModifierDiagnostics.evaluatedFaceCount}
+      hasActiveModifiers={store.selectedModifierDiagnostics.hasActiveModifiers}
+      onAddModifier={store.addModifier}
+      onUpdateModifier={store.updateModifier}
+      onReorderModifier={store.reorderModifier}
+      onRemoveModifier={store.removeModifier}
+      onApplyModifier={store.applyModifier}
+      onRecalculateNormalsOutside={store.recalculateObjectNormalsOutside}
+      onFlipNormals={store.flipObjectNormals}
+      onSetObjectShading={store.setObjectShading}
+      onTabChange={setLinerTab}
+      ngonHighlightActive={Boolean(
+        activeNgonSubdivAlert && !activeNgonSubdivAlert.dismissed,
+      )}
+      ngonHighlightDismissed={Boolean(activeNgonSubdivAlert?.dismissed)}
+      onDismissNgonHighlight={(modId) => {
+        if (store.selectedObject) {
+          setDismissedNgonKey(`${store.selectedObject.id}::${modId}`);
+        }
+      }}
+      onRestoreNgonHighlight={() => setDismissedNgonKey(null)}
+      onClose={() =>
+        updateToolbarPrefs((prev) => ({
+          ...prev,
+          linerVisible: false,
+        }))
+      }
+    />
+  );
 
   return (
     <div className="w-screen h-screen flex flex-col bg-[#18191c] text-[#e4e6eb] overflow-hidden select-none">
@@ -1627,7 +1725,6 @@ export default function App() {
           hasUnsavedChanges={store.hasUnsavedChanges}
           saveStatus={store.saveStatus}
           lastSaveError={store.lastSaveError}
-          activeWorkspace={activeView}
           hasSelectedObject={Boolean(store.selectedObject)}
           displayMode={store.settings.displayMode}
           xrayTransparency={store.settings.xrayTransparency}
@@ -1682,53 +1779,75 @@ export default function App() {
           }
           onFocusSelected={() => viewportRef.current?.focusSelected()}
           onToggleLiner={handleToggleLiner}
-          onChangeWorkspace={handleChangeWorkspace}
-          timelapseRecordingActive={
-            store.settings.timelapseAutoRecord && !store.timelapseMeta?.paused
-          }
-          timelapseStepCount={store.timelapseMeta?.stepCount ?? 0}
+          onOpenApp={(appId) => {
+            void handleShareWithEcosystem(appId);
+          }}
         />
       )}
+
+      {activeView !== 'gallery' &&
+        activeView !== 'timelapse' &&
+        activeAppId && (
+          <WorkspaceQuickControls
+            activeAppId={activeAppId}
+            toolbarMode={toolbarPrefs.leftToolbarMode}
+            toolbarControlsId={
+              activeAppId === 'uvs'
+                ? 'uv-workspace-toolbar'
+                : activeAppId === 'materials'
+                  ? 'material-workspace-panel'
+                  : 'loopa-left-toolbar'
+            }
+            workMode={store.workMode}
+            canEdit={canEditSelected}
+            onToggleToolbar={handleToggleLeftToolbar}
+            onToggleWorkMode={handleSharedWorkModeChange}
+          />
+        )}
 
       {/* Contenedor principal de espacios de trabajo y par de menús radiales flotantes */}
       <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* Espacios de Trabajo: Editor de UVs / Timelapse */}
         {activeView === 'uv_editing' && (
-        <UVWorkspace
-          leadingAction={
-            <EcosystemSwitchButton
-              activeAppId="uvs"
-              onClick={() => setShowShareModal(true)}
+          <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+            <UVWorkspace
+              ref={uvWorkspaceRef}
+              toolbarVisible={toolbarPrefs.leftToolbarMode !== 'hidden'}
+              workMode={store.workMode}
+              objectId={uvTargetObject?.id ?? null}
+              objectName={uvTargetObject?.name ?? null}
+              objectTransform={uvTargetObject?.transform}
+              materialAsset={uvTargetMaterialAsset}
+              onUpdateMaterial={store.updateMaterial}
+              shading={uvTargetObject?.shading}
+              mesh={uvTargetMesh}
+              meshRevision={store.meshRevision}
+              selection3DMode={store.editSelectionMode}
+              selected3DComponentIds={store.selectedComponentIds}
+              onSync3DSelection={store.setEditSelectionFromUV}
+              onCommitMesh={(beforeMesh, afterMesh) => {
+                if (uvTargetObject) {
+                  store.commitMeshEditFromGizmo(
+                    uvTargetObject.id,
+                    beforeMesh,
+                    afterMesh,
+                  );
+                }
+              }}
+              onUndo={() => store.undo()}
+              onRedo={() => store.redo()}
+              onReturnToModeler={() => {
+                void handleShareWithEcosystem('modeler');
+              }}
+              onQuickStateChange={setUvQuickState}
             />
-          }
-          ref={uvWorkspaceRef}
-          objectId={uvTargetObject?.id ?? null}
-          objectName={uvTargetObject?.name ?? null}
-          objectTransform={uvTargetObject?.transform}
-          materialAsset={uvTargetMaterialAsset}
-          onUpdateMaterial={store.updateMaterial}
-          shading={uvTargetObject?.shading}
-          reserveTopLeftCorner={!toolbarPrefs.barhomeVisible}
-          mesh={uvTargetMesh}
-          meshRevision={store.meshRevision}
-          selection3DMode={store.editSelectionMode}
-          selected3DComponentIds={store.selectedComponentIds}
-          onSync3DSelection={store.setEditSelectionFromUV}
-          onCommitMesh={(beforeMesh, afterMesh) => {
-            if (uvTargetObject) {
-              store.commitMeshEditFromGizmo(
-                uvTargetObject.id,
-                beforeMesh,
-                afterMesh,
-              );
-            }
-          }}
-          onUndo={() => store.undo()}
-          onRedo={() => store.redo()}
-          onReturnToModeler={() => handleChangeWorkspace('layout')}
-          onQuickStateChange={setUvQuickState}
-        />
-      )}
+            {toolbarPrefs.linerVisible && (
+              <div className="absolute inset-y-0 right-0 z-30 pointer-events-none">
+                {renderLinerPanel(true)}
+              </div>
+            )}
+          </div>
+        )}
 
       {activeView === 'timelapse' && (
         <TimelapseModal
@@ -1763,13 +1882,10 @@ export default function App() {
       >
         {activeView === 'layout' && (
           <LeftToolSidebar
-            activeAppId={activeAppId ?? undefined}
-            onOpenEcosystem={() => setShowShareModal(true)}
             displayMode={toolbarPrefs.leftToolbarMode}
             barhomeVisible={toolbarPrefs.barhomeVisible}
             moduleOrder={toolbarPrefs.moduleOrder}
             expandedModules={toolbarPrefs.expandedModules}
-            onCycleDisplayMode={handleCycleLeftToolbarMode}
             onToggleModuleExpanded={handleToggleModuleExpanded}
             onReorderModules={handleReorderModules}
             onResetModuleLayout={handleResetModuleLayout}
@@ -1801,7 +1917,6 @@ export default function App() {
             onChangeAxisConstraint={store.setAxisConstraint}
             onGQuickTapMove={store.triggerGQuickTapMove}
             onGHoldSlide={store.triggerGHoldSlide}
-            onToggleWorkMode={store.toggleWorkMode}
             onChangeEditSelectionMode={store.changeEditSelectionMode}
             onChangeVertexSelectionTool={store.setVertexSelectionTool}
             onChangeEdgeSelectionTool={store.setEdgeSelectionTool}
@@ -1864,12 +1979,6 @@ export default function App() {
 
         {activeView === 'materials' && (
           <MaterialWorkspace
-            headerAction={
-              <EcosystemSwitchButton
-                activeAppId="materials"
-                onClick={() => setShowShareModal(true)}
-              />
-            }
             objects={store.renderedObjects}
             selectedObject={store.selectedObject}
             selectedObjectId={store.selectedObjectId}
@@ -1880,6 +1989,7 @@ export default function App() {
             editSelectionMode={store.editSelectionMode}
             selectedComponentIds={store.selectedComponentIds}
             reserveTopLeftCorner={!toolbarPrefs.barhomeVisible}
+            toolbarVisible={toolbarPrefs.leftToolbarMode !== 'hidden'}
             onSelectObject={store.selectObject}
             onSetObjectShading={store.setObjectShading}
             onSetDisplayMode={store.setDisplayMode}
@@ -1894,7 +2004,6 @@ export default function App() {
             onAssignMaterialToFaces={store.assignMaterialToFaces}
             onUnassignMaterialFromFaces={store.unassignMaterialFromFaces}
             onSelectFacesByMaterial={store.selectFacesByMaterial}
-            onReturnToLayout={() => handleChangeWorkspace('layout')}
           />
         )}
 
@@ -2027,89 +2136,10 @@ export default function App() {
           }
         />
 
-        {/* D. LINER: Panel Lateral Derecho Desplegable (Jerarquía, Modificadores y Materiales) */}
-        <LinerPanel
-          isOpen={activeView === 'layout' && toolbarPrefs.linerVisible}
-          scenes={store.scenes}
-          activeSceneId={store.activeSceneId}
-          activeCollectionId={store.activeCollectionId}
-          objects={store.renderedObjects}
-          selectedObjectId={store.selectedObjectId}
-          selectedObjectIds={store.selectedObjectIds}
-          workMode={store.workMode}
-          editSelectionMode={store.editSelectionMode}
-          selectedComponentIds={store.selectedComponentIds}
-          liveTransformOverride={liveTransformOverride}
-          onSelectObject={store.selectObject}
-          onSelectObjectInScene={store.selectObjectInScene}
-          onRenameObject={store.renameObject}
-          onDuplicateObject={store.duplicateObjectById}
-          onToggleVisibility={store.toggleObjectVisibility}
-          onToggleLock={store.toggleObjectLock}
-          onDeleteObject={store.deleteObject}
-          onUpdateObjectTransform={store.updateObjectTransform}
-          onUpdateEditCentroidAxis={store.updateSelectedVerticesPosition}
-          onCreateScene={() => store.createScene()}
-          onSwitchScene={store.switchScene}
-          onRenameScene={store.renameScene}
-          onDeleteScene={store.deleteScene}
-          onCreateCollection={store.createCollection}
-          onSelectCollection={store.selectCollection}
-          onRenameCollection={store.renameCollection}
-          onToggleCollectionExpanded={store.toggleCollectionExpanded}
-          onDeleteCollection={store.deleteCollection}
-          onMoveObjectToCollection={store.moveObjectToCollection}
-          onUpdateReferenceImageProps={store.updateReferenceImageProps}
-          onUpdateLightProps={store.updateLightProps}
-          modifierDiagnostics={store.selectedModifierDiagnostics.diagnostics}
-          evaluatedVertexCount={
-            store.selectedModifierDiagnostics.evaluatedVertexCount
-          }
-          evaluatedFaceCount={
-            store.selectedModifierDiagnostics.evaluatedFaceCount
-          }
-          hasActiveModifiers={
-            store.selectedModifierDiagnostics.hasActiveModifiers
-          }
-          onAddModifier={store.addModifier}
-          onUpdateModifier={store.updateModifier}
-          onReorderModifier={store.reorderModifier}
-          onRemoveModifier={store.removeModifier}
-          onApplyModifier={store.applyModifier}
-          onRecalculateNormalsOutside={store.recalculateObjectNormalsOutside}
-          onFlipNormals={store.flipObjectNormals}
-          materials={store.materials}
-          displayMode={store.settings.displayMode}
-          onCreateMaterial={store.createMaterial}
-          onRenameMaterial={store.renameMaterial}
-          onPushMaterialHistory={store.pushMaterialHistorySnapshot}
-          onUpdateMaterial={store.updateMaterial}
-          onDuplicateMaterial={store.duplicateMaterial}
-          onDeleteMaterial={store.deleteMaterial}
-          getMaterialUsageSummary={store.getMaterialUsageSummary}
-          onAssignMaterialToObjects={store.assignMaterialToObjects}
-          onAssignMaterialToFaces={store.assignMaterialToFaces}
-          onUnassignMaterialFromFaces={store.unassignMaterialFromFaces}
-          onSelectFacesByMaterial={store.selectFacesByMaterial}
-          onSetObjectShading={store.setObjectShading}
-          onTabChange={setLinerTab}
-          ngonHighlightActive={Boolean(
-            activeNgonSubdivAlert && !activeNgonSubdivAlert.dismissed,
-          )}
-          ngonHighlightDismissed={Boolean(activeNgonSubdivAlert?.dismissed)}
-          onDismissNgonHighlight={(modId) => {
-            if (store.selectedObject) {
-              setDismissedNgonKey(`${store.selectedObject.id}::${modId}`);
-            }
-          }}
-          onRestoreNgonHighlight={() => setDismissedNgonKey(null)}
-          onClose={() =>
-            updateToolbarPrefs((prev) => ({
-              ...prev,
-              linerVisible: false,
-            }))
-          }
-        />
+        {/* D. LINER: Panel lateral de jerarquía y modificadores */}
+        {renderLinerPanel(
+          activeView === 'layout' && toolbarPrefs.linerVisible,
+        )}
       </div>
 
         {/* Menús radiales y control flotante de modificadores */}
@@ -2156,10 +2186,6 @@ export default function App() {
               canRedo={store.canRedo}
               hasUnsavedChanges={store.hasUnsavedChanges}
               saveStatus={store.saveStatus}
-              timelapseRecordingActive={
-                store.settings.timelapseAutoRecord && !store.timelapseMeta?.paused
-              }
-              timelapseStepCount={store.timelapseMeta?.stepCount ?? 0}
               proportionalEnabled={store.settings.proportionalEditing.enabled}
               proportionalConnectedOnly={
                 store.settings.proportionalEditing.connectedOnly
@@ -2277,7 +2303,6 @@ export default function App() {
               onReturnToGallery={() => {
                 void handleReturnToGallery();
               }}
-              onChangeWorkspace={handleChangeWorkspace}
               onOpenSettings={() => setSettingsModalTab('touch')}
             />
           )}

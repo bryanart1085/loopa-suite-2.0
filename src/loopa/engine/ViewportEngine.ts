@@ -5,11 +5,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
-import {
-  EditableMesh,
-  SerializedEditableMesh,
-  Vec3,
-} from '../core/mesh/EditableMesh';
+import { EditableMesh, SerializedEditableMesh, Vec3 } from '../core/mesh/EditableMesh';
 import {
   EditSelectionMode,
   applyTransformToVertices,
@@ -45,6 +41,10 @@ import {
   resolveObjectMaterial,
 } from '../core/project/hierarchy';
 import {
+  EvaluatedMaterialSurface,
+  evaluateMaterialNodeGraph,
+} from '../core/materials/nodeGraph';
+import {
   AxisConstraint,
   CameraProjection,
   LightData,
@@ -74,11 +74,7 @@ import {
   hasActiveViewportModifiers,
 } from '../core/modifiers/evaluateModifiers';
 import { clampVerticesForMirrorClipping } from '../core/modifiers/mirrorModifier';
-import {
-  ModifierSlot,
-  ModifierTransformRef,
-  normalizeMirrorParams,
-} from '../core/modifiers/types';
+import { ModifierSlot, ModifierTransformRef, normalizeMirrorParams } from '../core/modifiers/types';
 import {
   BoxSelectRect,
   EMPTY_MODIFIER_STATE,
@@ -92,22 +88,11 @@ import {
   triangleIntersectsRect2D,
 } from './boxSelectMath';
 
-export type CameraPreset =
-  | 'front'
-  | 'back'
-  | 'top'
-  | 'bottom'
-  | 'right'
-  | 'left'
-  | 'iso'
-  | 'focus';
+export type CameraPreset = 'front' | 'back' | 'top' | 'bottom' | 'right' | 'left' | 'iso' | 'focus';
 
 export type CameraQuaternionTuple = [number, number, number, number];
 
-export function computeCameraPresetOffset(
-  preset: CameraPreset,
-  distance: number,
-): Vec3 {
+export function computeCameraPresetOffset(preset: CameraPreset, distance: number): Vec3 {
   const d = Math.max(0.1, distance);
   const topEps = Math.max(1e-4, d * 1e-4);
   switch (preset) {
@@ -181,17 +166,9 @@ export interface ViewportCallbacks {
     source: 'orbit' | 'preset' | 'projection',
   ) => void;
   onLiveObjectTransform: (id: string, transform: ObjectTransform) => void;
-  onCommitObjectTransform: (
-    id: string,
-    before: ObjectTransform,
-    after: ObjectTransform,
-  ) => void;
+  onCommitObjectTransform: (id: string, before: ObjectTransform, after: ObjectTransform) => void;
   onCommitObjectTransforms: (changes: ObjectTransformChange[]) => void;
-  onCommitMeshEdit: (
-    id: string,
-    before: EditableMesh,
-    after: EditableMesh,
-  ) => void;
+  onCommitMeshEdit: (id: string, before: EditableMesh, after: EditableMesh) => void;
   onCommitSculptStroke?: (id: string, nextMesh: EditableMesh) => void;
   onChangeProportionalRadius?: (radius: number) => void;
   onLoopCutSlideDelta?: (delta: number) => void;
@@ -210,10 +187,7 @@ interface ObjectVisual {
   faceOrientationFrontMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial> | null;
   faceOrientationBackMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial> | null;
   wireEdges: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
-  selectionOutline?: THREE.Mesh<
-    THREE.BufferGeometry,
-    THREE.MeshBasicMaterial
-  >;
+  selectionOutline?: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   baseSolidCollider: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   refPlaneMesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null;
   refTexture: THREE.Texture | null;
@@ -366,10 +340,15 @@ export class ViewportEngine {
   private selectedObjectId: string | null = null;
   private selectedObjectIds = new Set<string>();
   private currentObjectsData = new Map<string, SceneObjectData>();
-  private sharedMaterials = new Map<string, THREE.MeshStandardMaterial>();
+  private sharedMaterials = new Map<string, THREE.MeshPhysicalMaterial>();
   private sharedMaterialTextures = new Map<
     string,
-    { dataUrl: string; texture: THREE.Texture }
+    Partial<
+      Record<
+        'map' | 'normalMap' | 'bumpMap',
+        { dataUrl: string; texture: THREE.Texture }
+      >
+    >
   >();
   private materialAssetMap = new Map<string, MaterialAsset>();
   private workMode: WorkMode = 'object';
@@ -413,8 +392,14 @@ export class ViewportEngine {
   private sculptPointerId: number | null = null;
   private sculptGrabPlane = new THREE.Plane();
   private sculptCursorGroup = new THREE.Group();
+  private sculptCursorMirrorGroup = new THREE.Group();
   private sculptCursorRing: THREE.LineLoop;
   private sculptCursorCenter: THREE.Mesh;
+  private sculptCursorMirrorPoints: THREE.Mesh[] = [];
+  private sculptCursorMirrorGeometry: THREE.SphereGeometry;
+  private sculptCursorMirrorMaterial: THREE.MeshBasicMaterial;
+  private sculptCursorLastWorldPoint: THREE.Vector3 | null = null;
+  private sculptCursorLastWorldNormal: THREE.Vector3 | null = null;
 
   // Drag tracking
   private isGizmoDragging = false;
@@ -505,9 +490,7 @@ export class ViewportEngine {
       powerPreference: 'high-performance',
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(
-      this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2),
-    );
+    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -834,9 +817,30 @@ export class ViewportEngine {
     this.sculptCursorCenter.renderOrder = 12;
     this.sculptCursorCenter.frustumCulled = false;
 
+    this.sculptCursorMirrorGeometry = new THREE.SphereGeometry(0.018, 8, 6);
+    this.sculptCursorMirrorMaterial = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+      depthWrite: false,
+    });
+    for (let i = 0; i < 7; i++) {
+      const marker = new THREE.Mesh(
+        this.sculptCursorMirrorGeometry,
+        this.sculptCursorMirrorMaterial,
+      );
+      marker.renderOrder = 12;
+      marker.frustumCulled = false;
+      marker.visible = false;
+      this.sculptCursorMirrorPoints.push(marker);
+    }
+
     this.sculptCursorGroup.add(this.sculptCursorRing, this.sculptCursorCenter);
     this.sculptCursorGroup.visible = false;
-    this.scene.add(this.sculptCursorGroup);
+    this.sculptCursorMirrorGroup.add(...this.sculptCursorMirrorPoints);
+    this.sculptCursorMirrorGroup.visible = false;
+    this.scene.add(this.sculptCursorGroup, this.sculptCursorMirrorGroup);
 
     // Gizmo Anchor for Edit Mode
     this.editGizmoAnchor = new THREE.Object3D();
@@ -845,10 +849,7 @@ export class ViewportEngine {
 
     // 1. TransformControls Gizmos (bound BEFORE gesture & orbit; ordered inner Scale -> middle Rotate -> outer Translate for conflict-free ALL mode)
     const createConfiguredGizmo = (): TransformControls => {
-      const ctrl = new TransformControls(
-        this.activeCamera,
-        this.renderer.domElement,
-      );
+      const ctrl = new TransformControls(this.activeCamera, this.renderer.domElement);
       ctrl.setSize(1.25);
       ctrl.setColors(0xe05252, 0x52b852, 0x48bce8, 0xffff00);
       ctrl.getRaycaster().params.Line.threshold = 0.25;
@@ -930,16 +931,11 @@ export class ViewportEngine {
         this.isGizmoDragging ||
         this.transformControls.axis !== null ||
         (this.activeTool === 'all' &&
-          (this.rotateGizmoControls.axis !== null ||
-            this.scaleGizmoControls.axis !== null)),
-      isBoxSelectDisabled: () =>
-        this.loopCutPreviewMode || this.workMode === 'sculpt',
-      isShiftHoldDisabled: () =>
-        this.loopCutPreviewMode && this.loopCutSlideActive,
+          (this.rotateGizmoControls.axis !== null || this.scaleGizmoControls.axis !== null)),
+      isBoxSelectDisabled: () => this.loopCutPreviewMode || this.workMode === 'sculpt',
+      isShiftHoldDisabled: () => this.loopCutPreviewMode && this.loopCutSlideActive,
       isTrackballDisabled: () =>
-        this.loopCutPreviewMode ||
-        this.suppressGizmo ||
-        this.workMode === 'sculpt',
+        this.loopCutPreviewMode || this.suppressGizmo || this.workMode === 'sculpt',
       canTrackballRotate: () => this.canTrackballRotate(),
       getWorkMode: () => this.workMode,
       hasLongPressTarget: (clientX, clientY, pointerType) =>
@@ -951,17 +947,9 @@ export class ViewportEngine {
       onSingleTap: (clientX, clientY, pointerType, modifiers, shiftKey) => {
         const effective = this.mergeModifiers(modifiers);
         const shiftActive = effective.shift || shiftKey;
-        const additive =
-          Boolean(this.settings?.multiSelectTouch) || shiftActive;
+        const additive = Boolean(this.settings?.multiSelectTouch) || shiftActive;
         const ctrlActive = effective.ctrl;
-        this.performTapSelection(
-          clientX,
-          clientY,
-          pointerType,
-          additive,
-          false,
-          ctrlActive,
-        );
+        this.performTapSelection(clientX, clientY, pointerType, additive, false, ctrlActive);
       },
       onAltTap: () => {
         this.callbacks.onAltTap?.();
@@ -1019,16 +1007,8 @@ export class ViewportEngine {
       onModifierStateChange: (modifiers) => {
         this.callbacks.onModifierStateChange?.(modifiers);
       },
-      onTouchNavigationChange: (
-        activePointers,
-        modifiers,
-        isBoxSelectBlocking,
-      ) => {
-        this.syncTouchNavigationFlags(
-          activePointers,
-          modifiers,
-          isBoxSelectBlocking,
-        );
+      onTouchNavigationChange: (activePointers, modifiers, isBoxSelectBlocking) => {
+        this.syncTouchNavigationFlags(activePointers, modifiers, isBoxSelectBlocking);
       },
     });
 
@@ -1120,10 +1100,7 @@ export class ViewportEngine {
   public getCameraState(): TimelapseCameraState {
     const pos = this.activeCamera.position;
     const tgt = this.orbitControls.target;
-    const orthoHeight = Math.max(
-      0.2,
-      this.orthographicCamera.top - this.orthographicCamera.bottom,
-    );
+    const orthoHeight = Math.max(0.2, this.orthographicCamera.top - this.orthographicCamera.bottom);
     return {
       position: [pos.x, pos.y, pos.z],
       target: [tgt.x, tgt.y, tgt.z],
@@ -1189,9 +1166,7 @@ export class ViewportEngine {
     e.preventDefault();
     e.stopPropagation();
     const factor = e.deltaY < 0 ? 1.1 : 0.9;
-    const nextRadius = clampProportionalRadius(
-      this.proportionalSettings.radius * factor,
-    );
+    const nextRadius = clampProportionalRadius(this.proportionalSettings.radius * factor);
     if (Math.abs(nextRadius - this.proportionalSettings.radius) > 1e-5) {
       this.proportionalSettings = {
         ...this.proportionalSettings,
@@ -1286,9 +1261,7 @@ export class ViewportEngine {
     const worldPoint = hit.point.clone();
     const worldNormal = new THREE.Vector3(0, 0, 1);
     if (hit.face) {
-      const normalMat = new THREE.Matrix3().getNormalMatrix(
-        collider.matrixWorld,
-      );
+      const normalMat = new THREE.Matrix3().getNormalMatrix(collider.matrixWorld);
       worldNormal.copy(hit.face.normal).applyMatrix3(normalMat).normalize();
     } else {
       this.activeCamera.getWorldDirection(worldNormal).negate();
@@ -1306,28 +1279,29 @@ export class ViewportEngine {
   ): void {
     if (this.workMode !== 'sculpt' || !worldPoint) {
       this.sculptCursorGroup.visible = false;
+      this.sculptCursorMirrorGroup.visible = false;
+      this.sculptCursorLastWorldPoint = null;
+      this.sculptCursorLastWorldNormal = null;
+      this.sculptCursorMirrorPoints.forEach((point) => {
+        point.visible = false;
+      });
+      this.sculptCursorMirrorGroup.visible = false;
       return;
     }
-    const visual = this.selectedObjectId
-      ? this.visuals.get(this.selectedObjectId)
-      : undefined;
+    this.sculptCursorLastWorldPoint = worldPoint.clone();
+    this.sculptCursorLastWorldNormal = (worldNormal ?? new THREE.Vector3(0, 0, 1)).clone();
+    const visual = this.selectedObjectId ? this.visuals.get(this.selectedObjectId) : undefined;
     const avgScale = visual
       ? (Math.abs(visual.group.scale.x) +
           Math.abs(visual.group.scale.y) +
           Math.abs(visual.group.scale.z)) /
         3
       : 1;
-    const displayRadius = Math.max(
-      0.02,
-      this.sculptSettings.radius * Math.max(0.05, avgScale),
-    );
+    const displayRadius = Math.max(0.02, this.sculptSettings.radius * Math.max(0.05, avgScale));
     const colorHex = this.sculptSettings.invert ? 0xfb7185 : 0x5ecd6e;
-    (this.sculptCursorRing.material as THREE.LineBasicMaterial).color.setHex(
-      colorHex,
-    );
-    (this.sculptCursorCenter.material as THREE.MeshBasicMaterial).color.setHex(
-      colorHex,
-    );
+    (this.sculptCursorRing.material as THREE.LineBasicMaterial).color.setHex(colorHex);
+    (this.sculptCursorCenter.material as THREE.MeshBasicMaterial).color.setHex(colorHex);
+    this.sculptCursorMirrorMaterial.color.setHex(this.sculptSettings.invert ? 0x7dd3fc : 0x38bdf8);
 
     const n = (worldNormal ?? new THREE.Vector3(0, 0, 1)).clone().normalize();
     this.sculptCursorGroup.position.copy(worldPoint).addScaledVector(n, 0.004);
@@ -1335,29 +1309,91 @@ export class ViewportEngine {
     this.sculptCursorGroup.quaternion.copy(_quat);
     this.sculptCursorRing.scale.setScalar(displayRadius);
     this.sculptCursorGroup.visible = true;
+
+    this.sculptCursorMirrorPoints.forEach((point) => {
+      point.visible = false;
+    });
+    if (
+      visual &&
+      (this.sculptSettings.symmetry.x ||
+        this.sculptSettings.symmetry.y ||
+        this.sculptSettings.symmetry.z)
+    ) {
+      visual.group.updateMatrixWorld(true);
+      const localPoint = worldPoint.clone().applyMatrix4(visual.group.matrixWorld.clone().invert());
+      const normalMatrix = new THREE.Matrix3().getNormalMatrix(visual.group.matrixWorld);
+      const localNormal = n.clone().applyMatrix3(normalMatrix.clone().invert()).normalize();
+      const xSigns = this.sculptSettings.symmetry.x ? [1, -1] : [1];
+      const ySigns = this.sculptSettings.symmetry.y ? [1, -1] : [1];
+      const zSigns = this.sculptSettings.symmetry.z ? [1, -1] : [1];
+      let markerIndex = 0;
+
+      for (const sx of xSigns) {
+        for (const sy of ySigns) {
+          for (const sz of zSigns) {
+            if (sx === 1 && sy === 1 && sz === 1) continue;
+            const reflectedLocal = localPoint.clone();
+            reflectedLocal.x *= sx;
+            reflectedLocal.y *= sy;
+            reflectedLocal.z *= sz;
+            const reflectedWorld = reflectedLocal
+              .applyMatrix4(visual.group.matrixWorld)
+              .addScaledVector(
+                localNormal
+                  .clone()
+                  .set(localNormal.x * sx, localNormal.y * sy, localNormal.z * sz)
+                  .applyMatrix3(normalMatrix)
+                  .normalize(),
+                0.004,
+              );
+            if (reflectedWorld.distanceToSquared(worldPoint) < 1e-8) continue;
+            const marker = this.sculptCursorMirrorPoints[markerIndex++];
+            if (!marker) continue;
+            marker.position.copy(reflectedWorld);
+            marker.visible = true;
+            this.sculptCursorMirrorGroup.visible = true;
+          }
+        }
+      }
+    }
+    this.updateSculptCursorScreenSize();
   }
 
-  private applyLiveSculptMeshToVisual(
-    visual: ObjectVisual,
-    nextBaseMesh: EditableMesh,
-  ): void {
+  private updateSculptCursorScreenSize(): void {
+    if (!this.sculptCursorGroup.visible) return;
+    const height = this.renderer.domElement.clientHeight;
+    if (height < 1) return;
+    let worldUnitsPerPixel = 0;
+    if (this.activeCamera instanceof THREE.PerspectiveCamera) {
+      const distance = this.activeCamera.position.distanceTo(this.sculptCursorGroup.position);
+      worldUnitsPerPixel =
+        (2 * distance * Math.tan(THREE.MathUtils.degToRad(this.activeCamera.fov / 2))) / height;
+    } else if (this.activeCamera instanceof THREE.OrthographicCamera) {
+      worldUnitsPerPixel =
+        (this.activeCamera.top - this.activeCamera.bottom) / (this.activeCamera.zoom * height);
+    }
+    if (!Number.isFinite(worldUnitsPerPixel) || worldUnitsPerPixel <= 0) return;
+    this.sculptCursorCenter.scale.setScalar((worldUnitsPerPixel * 3) / 0.022);
+    const mirrorScale = (worldUnitsPerPixel * 2.5) / 0.018;
+    this.sculptCursorMirrorPoints.forEach((point) => {
+      point.scale.setScalar(mirrorScale);
+    });
+  }
+
+  private applyLiveSculptMeshToVisual(visual: ObjectVisual, nextBaseMesh: EditableMesh): void {
     visual.baseEditableMesh = nextBaseMesh;
     if (visual.hasActiveModifiers && visual.modifiers.length > 0) {
       const objData = this.currentObjectsData.get(visual.id);
       if (objData) {
-        const evalRes = evaluateObjectModifiers(
-          nextBaseMesh.toJSON(),
-          visual.modifiers,
-          {
-            ownerTransform: {
-              id: objData.id,
-              position: objData.transform.position,
-              rotation: objData.transform.rotation,
-              scale: objData.transform.scale,
-            },
-            sceneTransformRefs: this.sceneTransformRefs,
+        const evalRes = evaluateObjectModifiers(nextBaseMesh.toJSON(), visual.modifiers, {
+          ownerTransform: {
+            id: objData.id,
+            position: objData.transform.position,
+            rotation: objData.transform.rotation,
+            scale: objData.transform.scale,
           },
-        );
+          sceneTransformRefs: this.sceneTransformRefs,
+        });
         visual.editableMesh = evalRes.hasActiveModifiers
           ? EditableMesh.fromJSON(evalRes.mesh)
           : nextBaseMesh;
@@ -1390,10 +1426,7 @@ export class ViewportEngine {
     this.orbitControls.enableRotate = !this.cameraRotationLocked;
 
     if (session && commit && session.hasModified) {
-      this.callbacks.onCommitSculptStroke?.(
-        session.objectId,
-        session.workingMesh.clone(),
-      );
+      this.callbacks.onCommitSculptStroke?.(session.objectId, session.workingMesh.clone());
     } else if (session && !commit) {
       const visual = this.visuals.get(session.objectId);
       if (visual) {
@@ -1447,10 +1480,7 @@ export class ViewportEngine {
     hit.visual.group.updateMatrixWorld(true);
     const camDir = new THREE.Vector3();
     this.activeCamera.getWorldDirection(camDir).normalize();
-    this.sculptGrabPlane.setFromNormalAndCoplanarPoint(
-      camDir.clone().negate(),
-      hit.worldPoint,
-    );
+    this.sculptGrabPlane.setFromNormalAndCoplanarPoint(camDir.clone().negate(), hit.worldPoint);
 
     const session = createSculptStrokeSession({
       objectId: hit.visual.id,
@@ -1463,12 +1493,7 @@ export class ViewportEngine {
     this.sculptStrokeSession = session;
     this.sculptPointerId = e.pointerId;
 
-    const changed = stepSculptStroke(
-      session,
-      hit.worldPoint,
-      hit.worldNormal,
-      true,
-    );
+    const changed = stepSculptStroke(session, hit.worldPoint, hit.worldNormal, true);
     if (changed) {
       this.applyLiveSculptMeshToVisual(hit.visual, session.workingMesh);
     }
@@ -1501,19 +1526,8 @@ export class ViewportEngine {
 
       if (session.settings.brush === 'grab') {
         const planeHit = new THREE.Vector3();
-        if (
-          this.raycastPointerToPlane(
-            e.clientX,
-            e.clientY,
-            this.sculptGrabPlane,
-            planeHit,
-          )
-        ) {
-          const changed = stepSculptStroke(
-            session,
-            planeHit,
-            this.sculptGrabPlane.normal,
-          );
+        if (this.raycastPointerToPlane(e.clientX, e.clientY, this.sculptGrabPlane, planeHit)) {
+          const changed = stepSculptStroke(session, planeHit, this.sculptGrabPlane.normal);
           if (changed) {
             this.applyLiveSculptMeshToVisual(visual, session.workingMesh);
           }
@@ -1529,11 +1543,7 @@ export class ViewportEngine {
         this.requestRender();
         return;
       }
-      const changed = stepSculptStroke(
-        session,
-        hit.worldPoint,
-        hit.worldNormal,
-      );
+      const changed = stepSculptStroke(session, hit.worldPoint, hit.worldNormal);
       if (changed) {
         this.applyLiveSculptMeshToVisual(hit.visual, session.workingMesh);
       }
@@ -1544,10 +1554,7 @@ export class ViewportEngine {
 
     if (e.pointerType !== 'touch' && !this.isOrbitDragging) {
       const hit = this.raycastActiveSculptMesh(e.clientX, e.clientY);
-      this.updateSculptCursorVisual(
-        hit ? hit.worldPoint : null,
-        hit?.worldNormal,
-      );
+      this.updateSculptCursorVisual(hit ? hit.worldPoint : null, hit?.worldNormal);
       this.requestRender();
     }
   };
@@ -1593,8 +1600,7 @@ export class ViewportEngine {
       this.loopCutSlidePointerId = null;
       this.orbitControls.enabled = !this.isAnyTransformDragging();
       this.orbitControls.enableRotate =
-        !this.cameraRotationLocked &&
-        !(this.loopCutPreviewMode && this.loopCutSlideActive);
+        !this.cameraRotationLocked && !(this.loopCutPreviewMode && this.loopCutSlideActive);
       this.orbitControls.enableZoom = true;
       this.orbitControls.enablePan = true;
       return;
@@ -1613,18 +1619,13 @@ export class ViewportEngine {
     }
 
     const slideBlockingOrbit =
-      this.loopCutPreviewMode &&
-      this.loopCutSlideActive &&
-      activePointers.size === 1;
+      this.loopCutPreviewMode && this.loopCutSlideActive && activePointers.size === 1;
 
     const touchCfg = this.settings?.touch ?? DEFAULT_TOUCH_SETTINGS;
-    const hasTouch = Array.from(activePointers.values()).some(
-      (p) => p.pointerType === 'touch',
-    );
+    const hasTouch = Array.from(activePointers.values()).some((p) => p.pointerType === 'touch');
     if (!hasTouch) {
       this.orbitControls.enabled = !this.isAnyTransformDragging();
-      this.orbitControls.enableRotate =
-        !this.cameraRotationLocked && !slideBlockingOrbit;
+      this.orbitControls.enableRotate = !this.cameraRotationLocked && !slideBlockingOrbit;
       this.orbitControls.enableZoom = true;
       this.orbitControls.enablePan = true;
       return;
@@ -1641,11 +1642,7 @@ export class ViewportEngine {
     this.orbitControls.enabled = !this.isAnyTransformDragging();
   }
 
-  private handleLongPressContext(
-    clientX: number,
-    clientY: number,
-    pointerType: string,
-  ): void {
+  private handleLongPressContext(clientX: number, clientY: number, pointerType: string): void {
     if (this.loopCutPreviewMode || this.workMode === 'sculpt') return;
     this.suppressOrbitForContextPress = true;
     this.orbitControls.enabled = false;
@@ -1659,11 +1656,7 @@ export class ViewportEngine {
         hitComponentId: null,
       });
     } else {
-      const hitComponentId = this.hitTestEditComponent(
-        clientX,
-        clientY,
-        pointerType,
-      );
+      const hitComponentId = this.hitTestEditComponent(clientX, clientY, pointerType);
       this.callbacks.onOpenContextMenu({
         clientX,
         clientY,
@@ -1673,11 +1666,7 @@ export class ViewportEngine {
     }
   }
 
-  private hitTestObject(
-    clientX: number,
-    clientY: number,
-    pointerType: string,
-  ): string | null {
+  private hitTestObject(clientX: number, clientY: number, pointerType: string): string | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
     const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
@@ -1769,10 +1758,7 @@ export class ViewportEngine {
     const isOccluded = (worldPoint: THREE.Vector3): boolean => {
       if (xray || !baseCollider) return false;
       const projected = _v2.copy(worldPoint).project(this.activeCamera);
-      this.raycaster.setFromCamera(
-        new THREE.Vector2(projected.x, projected.y),
-        this.activeCamera,
-      );
+      this.raycaster.setFromCamera(new THREE.Vector2(projected.x, projected.y), this.activeCamera);
       const distToPoint = this.raycaster.ray.origin.distanceTo(worldPoint);
       const hits = this.raycaster.intersectObject(baseCollider, false);
       if (hits.length > 0 && hits[0].distance < distToPoint - 0.06) {
@@ -1786,9 +1772,7 @@ export class ViewportEngine {
       let bestScore = Infinity;
 
       for (const v of baseMesh.vertices) {
-        _v0
-          .set(v.position[0], v.position[1], v.position[2])
-          .applyMatrix4(visual.group.matrixWorld);
+        _v0.set(v.position[0], v.position[1], v.position[2]).applyMatrix4(visual.group.matrixWorld);
         const worldPos = _v0.clone();
         _v1.copy(worldPos).project(this.activeCamera);
         if (_v1.z < -1 || _v1.z > 1) continue;
@@ -1818,12 +1802,8 @@ export class ViewportEngine {
         const vb = baseMesh.getVertex(edge.v1);
         if (!va || !vb) continue;
 
-        const wa = new THREE.Vector3(...va.position).applyMatrix4(
-          visual.group.matrixWorld,
-        );
-        const wb = new THREE.Vector3(...vb.position).applyMatrix4(
-          visual.group.matrixWorld,
-        );
+        const wa = new THREE.Vector3(...va.position).applyMatrix4(visual.group.matrixWorld);
+        const wb = new THREE.Vector3(...vb.position).applyMatrix4(visual.group.matrixWorld);
 
         const pa = wa.clone().project(this.activeCamera);
         const pb = wb.clone().project(this.activeCamera);
@@ -1861,16 +1841,9 @@ export class ViewportEngine {
     };
   }
 
-  private isBoxSelectAdditive(
-    modifiers: TouchModifierState,
-    shiftKey = false,
-  ): boolean {
+  private isBoxSelectAdditive(modifiers: TouchModifierState, shiftKey = false): boolean {
     const effective = this.mergeModifiers(modifiers);
-    return (
-      Boolean(this.settings?.multiSelectTouch) ||
-      effective.shift ||
-      shiftKey
-    );
+    return Boolean(this.settings?.multiSelectTouch) || effective.shift || shiftKey;
   }
 
   private toCanvasBoxRect(rect: BoxSelectRect): {
@@ -1960,17 +1933,12 @@ export class ViewportEngine {
       }
 
       const mesh = visual.editableMesh;
-      const vertProjMap = new Map<
-        string,
-        { x: number; y: number; inFront: boolean }
-      >();
+      const vertProjMap = new Map<string, { x: number; y: number; inFront: boolean }>();
       let hit = false;
 
       // 1. Vertex inside box (fast early accept)
       for (const v of mesh.vertices) {
-        const wv = new THREE.Vector3(...v.position).applyMatrix4(
-          visual.group.matrixWorld,
-        );
+        const wv = new THREE.Vector3(...v.position).applyMatrix4(visual.group.matrixWorld);
         const pr = projectVec(wv);
         vertProjMap.set(v.id, pr);
         if (pr.inFront && isPointInRect2D(pr, canvasRect)) {
@@ -2048,10 +2016,7 @@ export class ViewportEngine {
     const isOccluded = (worldPoint: THREE.Vector3): boolean => {
       if (xray || !baseCollider) return false;
       const projected = _v2.copy(worldPoint).project(this.activeCamera);
-      this.raycaster.setFromCamera(
-        new THREE.Vector2(projected.x, projected.y),
-        this.activeCamera,
-      );
+      this.raycaster.setFromCamera(new THREE.Vector2(projected.x, projected.y), this.activeCamera);
       const distToPoint = this.raycaster.ray.origin.distanceTo(worldPoint);
       const hits = this.raycaster.intersectObject(baseCollider, false);
       return hits.length > 0 && hits[0].distance < distToPoint - 0.06;
@@ -2071,9 +2036,7 @@ export class ViewportEngine {
 
     if (this.editSelectionMode === 'vertex') {
       for (const v of mesh.vertices) {
-        const wv = new THREE.Vector3(...v.position).applyMatrix4(
-          visual.group.matrixWorld,
-        );
+        const wv = new THREE.Vector3(...v.position).applyMatrix4(visual.group.matrixWorld);
         const pr = projectWorld(wv);
         if (!pr.inFront) continue;
         if (!isPointInRect2D(pr, canvasRect)) continue;
@@ -2088,12 +2051,8 @@ export class ViewportEngine {
         const va = mesh.getVertex(edge.v0);
         const vb = mesh.getVertex(edge.v1);
         if (!va || !vb) continue;
-        const wa = new THREE.Vector3(...va.position).applyMatrix4(
-          visual.group.matrixWorld,
-        );
-        const wb = new THREE.Vector3(...vb.position).applyMatrix4(
-          visual.group.matrixWorld,
-        );
+        const wa = new THREE.Vector3(...va.position).applyMatrix4(visual.group.matrixWorld);
+        const wb = new THREE.Vector3(...vb.position).applyMatrix4(visual.group.matrixWorld);
         const pa = projectWorld(wa);
         const pb = projectWorld(wb);
         if (!pa.inFront && !pb.inFront) continue;
@@ -2104,10 +2063,7 @@ export class ViewportEngine {
           const mid = wa.clone().lerp(wb, 0.5);
           const aIn = pa.inFront && isPointInRect2D(pa, canvasRect);
           const bIn = pb.inFront && isPointInRect2D(pb, canvasRect);
-          const visible =
-            !isOccluded(mid) ||
-            (aIn && !isOccluded(wa)) ||
-            (bIn && !isOccluded(wb));
+          const visible = !isOccluded(mid) || (aIn && !isOccluded(wa)) || (bIn && !isOccluded(wb));
           if (!visible) continue;
         }
         matched.push(edge.id);
@@ -2152,7 +2108,11 @@ export class ViewportEngine {
           if (triangleIntersectsRect2D(pa, pb, pc, canvasRect)) {
             triIntersects = true;
             if (!xray) {
-              const triCenter = wa.clone().add(wb).add(wc).multiplyScalar(1 / 3);
+              const triCenter = wa
+                .clone()
+                .add(wb)
+                .add(wc)
+                .multiplyScalar(1 / 3);
               if (!isOccluded(triCenter)) {
                 visibleTriSample = triCenter;
                 break;
@@ -2166,9 +2126,7 @@ export class ViewportEngine {
         if (!triIntersects) continue;
         if (!xray && !visibleTriSample) {
           const fc = mesh.computeFaceCenter(face);
-          const worldCenter = new THREE.Vector3(...fc).applyMatrix4(
-            visual.group.matrixWorld,
-          );
+          const worldCenter = new THREE.Vector3(...fc).applyMatrix4(visual.group.matrixWorld);
           if (isOccluded(worldCenter)) continue;
         }
         matched.push(face.id);
@@ -2184,8 +2142,7 @@ export class ViewportEngine {
       for (const visual of this.visuals.values()) {
         const objData = this.currentObjectsData.get(visual.id);
         const isSelected =
-          this.selectedObjectIds.has(visual.id) ||
-          this.boxSelectPreviewObjectIds.has(visual.id);
+          this.selectedObjectIds.has(visual.id) || this.boxSelectPreviewObjectIds.has(visual.id);
         if (visual.objectType === 'reference_image' && objData) {
           this.syncReferenceVisual(visual, objData, isSelected);
         } else if (visual.objectType === 'light' && objData) {
@@ -2202,8 +2159,7 @@ export class ViewportEngine {
 
   private clearBoxSelectPreview(): void {
     const hadPreview =
-      this.boxSelectPreviewObjectIds.size > 0 ||
-      this.boxSelectPreviewComponentIds.size > 0;
+      this.boxSelectPreviewObjectIds.size > 0 || this.boxSelectPreviewComponentIds.size > 0;
     this.boxSelectPreviewObjectIds.clear();
     this.boxSelectPreviewComponentIds.clear();
     this.callbacks.onBoxSelectOverlayChange?.(null);
@@ -2298,29 +2254,13 @@ export class ViewportEngine {
           const visual = this.visuals.get(id);
           if (!visual) continue;
           this.multiObjectDragStartTransforms.set(id, {
-            position: [
-              visual.group.position.x,
-              visual.group.position.y,
-              visual.group.position.z,
-            ],
-            rotation: [
-              visual.group.rotation.x,
-              visual.group.rotation.y,
-              visual.group.rotation.z,
-            ],
-            scale: [
-              visual.group.scale.x,
-              visual.group.scale.y,
-              visual.group.scale.z,
-            ],
+            position: [visual.group.position.x, visual.group.position.y, visual.group.position.z],
+            rotation: [visual.group.rotation.x, visual.group.rotation.y, visual.group.rotation.z],
+            scale: [visual.group.scale.x, visual.group.scale.y, visual.group.scale.z],
           });
         }
-        this.multiTransformStartPosition.copy(
-          this.multiSelectionGizmoPivot.position,
-        );
-        this.multiTransformStartQuaternion.copy(
-          this.multiSelectionGizmoPivot.quaternion,
-        );
+        this.multiTransformStartPosition.copy(this.multiSelectionGizmoPivot.position);
+        this.multiTransformStartQuaternion.copy(this.multiSelectionGizmoPivot.quaternion);
         this.multiTransformStartScale.copy(this.multiSelectionGizmoPivot.scale);
         return;
       }
@@ -2385,11 +2325,7 @@ export class ViewportEngine {
         this.selectedComponentIds,
         {
           connectedOnly: this.proportionalSettings.connectedOnly,
-          objectScale: [
-            visual.group.scale.x,
-            visual.group.scale.y,
-            visual.group.scale.z,
-          ],
+          objectScale: [visual.group.scale.x, visual.group.scale.y, visual.group.scale.z],
         },
       );
       this.proportionalDragConnectedUsed = this.proportionalSettings.connectedOnly;
@@ -2433,11 +2369,7 @@ export class ViewportEngine {
         this.selectedComponentIds,
         {
           connectedOnly: this.proportionalSettings.connectedOnly,
-          objectScale: [
-            visual.group.scale.x,
-            visual.group.scale.y,
-            visual.group.scale.z,
-          ],
+          objectScale: [visual.group.scale.x, visual.group.scale.y, visual.group.scale.z],
         },
       );
       this.proportionalPreviewSourceMesh = visual.baseEditableMesh;
@@ -2494,18 +2426,9 @@ export class ViewportEngine {
       if (!ownerObj) continue;
       const ownerRef: ModifierTransformRef = {
         id: ownerObj.id,
-        position:
-          ownerObj.id === objectId
-            ? liveTransform.position
-            : ownerObj.transform.position,
-        rotation:
-          ownerObj.id === objectId
-            ? liveTransform.rotation
-            : ownerObj.transform.rotation,
-        scale:
-          ownerObj.id === objectId
-            ? liveTransform.scale
-            : ownerObj.transform.scale,
+        position: ownerObj.id === objectId ? liveTransform.position : ownerObj.transform.position,
+        rotation: ownerObj.id === objectId ? liveTransform.rotation : ownerObj.transform.rotation,
+        scale: ownerObj.id === objectId ? liveTransform.scale : ownerObj.transform.scale,
       };
       const evalRes = evaluateObjectModifiers(ownerObj.mesh, other.modifiers, {
         ownerTransform: ownerRef,
@@ -2619,18 +2542,10 @@ export class ViewportEngine {
         );
       } else {
         // deltaWorld = M_anchor_curr * M_anchor_start^-1
-        _mat4A.multiplyMatrices(
-          this.editGizmoAnchor.matrixWorld,
-          this.editDragStartAnchorInv,
-        );
+        _mat4A.multiplyMatrices(this.editGizmoAnchor.matrixWorld, this.editDragStartAnchorInv);
         _mat4C.multiplyMatrices(_mat4B, _mat4A);
         _mat4C.multiply(visual.group.matrixWorld);
-        applyTransformToVertices(
-          nextMesh,
-          this.editDragStartVertexIds,
-          _mat4C,
-          [0, 0, 0],
-        );
+        applyTransformToVertices(nextMesh, this.editDragStartVertexIds, _mat4C, [0, 0, 0]);
         affectedVertexIds = this.editDragStartVertexIds;
       }
 
@@ -2639,10 +2554,7 @@ export class ViewportEngine {
   }
 
   private handleGizmoDragEnd(): void {
-    if (
-      this.workMode === 'object' &&
-      this.multiObjectDragStartTransforms.size > 1
-    ) {
+    if (this.workMode === 'object' && this.multiObjectDragStartTransforms.size > 1) {
       const changes: ObjectTransformChange[] = [];
       for (const [id, before] of this.multiObjectDragStartTransforms) {
         const visual = this.visuals.get(id);
@@ -2651,21 +2563,9 @@ export class ViewportEngine {
           id,
           before,
           after: {
-            position: [
-              visual.group.position.x,
-              visual.group.position.y,
-              visual.group.position.z,
-            ],
-            rotation: [
-              visual.group.rotation.x,
-              visual.group.rotation.y,
-              visual.group.rotation.z,
-            ],
-            scale: [
-              visual.group.scale.x,
-              visual.group.scale.y,
-              visual.group.scale.z,
-            ],
+            position: [visual.group.position.x, visual.group.position.y, visual.group.position.z],
+            rotation: [visual.group.rotation.x, visual.group.rotation.y, visual.group.rotation.z],
+            scale: [visual.group.scale.x, visual.group.scale.y, visual.group.scale.z],
           },
         });
       }
@@ -2710,12 +2610,8 @@ export class ViewportEngine {
       .clone()
       .multiply(this.multiTransformStartQuaternion.clone().invert())
       .normalize();
-    const deltaScale = pivot.scale
-      .clone()
-      .divide(this.multiTransformStartScale);
-    const deltaPosition = pivot.position
-      .clone()
-      .sub(this.multiTransformStartPosition);
+    const deltaScale = pivot.scale.clone().divide(this.multiTransformStartScale);
+    const deltaPosition = pivot.position.clone().sub(this.multiTransformStartPosition);
     for (const [id, before] of this.multiObjectDragStartTransforms) {
       const visual = this.visuals.get(id);
       if (!visual) continue;
@@ -2744,18 +2640,10 @@ export class ViewportEngine {
 
       const liveTransform: ObjectTransform = {
         position: [position.x, position.y, position.z],
-        rotation: [
-          visual.group.rotation.x,
-          visual.group.rotation.y,
-          visual.group.rotation.z,
-        ],
+        rotation: [visual.group.rotation.x, visual.group.rotation.y, visual.group.rotation.z],
         scale: [scale.x, scale.y, scale.z],
       };
-      this.syncLiveObjectTransformAndMirrors(
-        id,
-        liveTransform,
-        id === this.selectedObjectId,
-      );
+      this.syncLiveObjectTransformAndMirrors(id, liveTransform, id === this.selectedObjectId);
     }
   }
 
@@ -2778,11 +2666,7 @@ export class ViewportEngine {
     return vertIds.size > 0;
   }
 
-  private projectToTrackball(
-    clientX: number,
-    clientY: number,
-    out: THREE.Vector3,
-  ): THREE.Vector3 {
+  private projectToTrackball(clientX: number, clientY: number, out: THREE.Vector3): THREE.Vector3 {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const w = Math.max(1, rect.width);
     const h = Math.max(1, rect.height);
@@ -2791,11 +2675,7 @@ export class ViewportEngine {
     const y = -(clientY - rect.top - h * 0.5) / radius;
     const lenSq = x * x + y * y;
     const z = lenSq <= 0.5 ? Math.sqrt(1 - lenSq) : 0.5 / Math.sqrt(lenSq);
-    return out
-      .set(x, y, z)
-      .normalize()
-      .applyQuaternion(this.activeCamera.quaternion)
-      .normalize();
+    return out.set(x, y, z).normalize().applyQuaternion(this.activeCamera.quaternion).normalize();
   }
 
   private applyTrackballEditMesh(visual: ObjectVisual): void {
@@ -2831,12 +2711,7 @@ export class ViewportEngine {
       _mat4A.multiply(_mat4C);
       _mat4C.multiplyMatrices(_mat4B, _mat4A);
       _mat4C.multiply(visual.group.matrixWorld);
-      applyTransformToVertices(
-        nextMesh,
-        this.editDragStartVertexIds,
-        _mat4C,
-        [0, 0, 0],
-      );
+      applyTransformToVertices(nextMesh, this.editDragStartVertexIds, _mat4C, [0, 0, 0]);
       affectedVertexIds = this.editDragStartVertexIds;
     }
 
@@ -2872,9 +2747,7 @@ export class ViewportEngine {
       for (const v of this.editDragStartMesh.vertices) {
         this.editDragStartVertexPositions.set(v.id, [...v.position]);
       }
-      const centroidLocal = visual.baseEditableMesh.computeCentroid(
-        this.editDragStartVertexIds,
-      );
+      const centroidLocal = visual.baseEditableMesh.computeCentroid(this.editDragStartVertexIds);
       if (!centroidLocal) {
         this.isTrackballDragging = false;
         this.editDragStartMesh = null;
@@ -2901,11 +2774,7 @@ export class ViewportEngine {
     if (!visual) return;
 
     this.projectToTrackball(clientX, clientY, _tbVecCurr);
-    const dot = THREE.MathUtils.clamp(
-      this.trackballStartVec.dot(_tbVecCurr),
-      -1,
-      1,
-    );
+    const dot = THREE.MathUtils.clamp(this.trackballStartVec.dot(_tbVecCurr), -1, 1);
     _tbAxis.crossVectors(this.trackballStartVec, _tbVecCurr);
     if (_tbAxis.lengthSq() < 1e-10) {
       this.trackballStartVec.copy(_tbVecCurr);
@@ -2920,20 +2789,14 @@ export class ViewportEngine {
 
     if (this.workMode === 'object') {
       const g = visual.group;
-      _tbQuatStart
-        .copy(this.trackballDeltaQuat)
-        .multiply(this.trackballStartQuat)
-        .normalize();
+      _tbQuatStart.copy(this.trackballDeltaQuat).multiply(this.trackballStartQuat).normalize();
       g.quaternion.copy(_tbQuatStart);
       const liveTransform: ObjectTransform = {
         position: [g.position.x, g.position.y, g.position.z],
         rotation: [g.rotation.x, g.rotation.y, g.rotation.z],
         scale: [g.scale.x, g.scale.y, g.scale.z],
       };
-      this.syncLiveObjectTransformAndMirrors(
-        this.selectedObjectId,
-        liveTransform,
-      );
+      this.syncLiveObjectTransformAndMirrors(this.selectedObjectId, liveTransform);
     } else if (this.editDragStartMesh) {
       this.applyTrackballEditMesh(visual);
     }
@@ -2986,9 +2849,7 @@ export class ViewportEngine {
     this.trackballMoved = false;
     this.callbacks.onTrackballActiveChange?.(false);
 
-    const visual = this.selectedObjectId
-      ? this.visuals.get(this.selectedObjectId)
-      : undefined;
+    const visual = this.selectedObjectId ? this.visuals.get(this.selectedObjectId) : undefined;
 
     if (this.workMode === 'object' && this.objectDragStartTransform) {
       const before = this.objectDragStartTransform;
@@ -3045,18 +2906,12 @@ export class ViewportEngine {
 
     if (this.modalTransformMode === 'vertex_slide') {
       if (this.editSelectionMode !== 'vertex') return false;
-      return buildVertexSlidePlan(
-        visual.baseEditableMesh,
-        this.selectedComponentIds,
-      ).valid;
+      return buildVertexSlidePlan(visual.baseEditableMesh, this.selectedComponentIds).valid;
     }
 
     if (this.modalTransformMode === 'edge_slide') {
       if (this.editSelectionMode !== 'edge') return false;
-      return buildEdgeSlidePlan(
-        visual.baseEditableMesh,
-        this.selectedComponentIds,
-      ).valid;
+      return buildEdgeSlidePlan(visual.baseEditableMesh, this.selectedComponentIds).valid;
     }
 
     return false;
@@ -3086,15 +2941,12 @@ export class ViewportEngine {
     const h = Math.max(1, rect.height);
     const p = _v2.copy(worldPoint).project(this.activeCamera);
     return {
-      x: ((p.x + 1) * 0.5) * w,
-      y: ((-p.y + 1) * 0.5) * h,
+      x: (p.x + 1) * 0.5 * w,
+      y: (-p.y + 1) * 0.5 * h,
     };
   }
 
-  private applyModalMoveEditMesh(
-    visual: ObjectVisual,
-    deltaWorld: THREE.Vector3,
-  ): void {
+  private applyModalMoveEditMesh(visual: ObjectVisual, deltaWorld: THREE.Vector3): void {
     if (!this.editDragStartMesh) return;
     const nextMesh = this.editDragStartMesh.clone();
     visual.group.updateMatrixWorld(true);
@@ -3121,12 +2973,7 @@ export class ViewportEngine {
       _mat4A.makeTranslation(deltaWorld.x, deltaWorld.y, deltaWorld.z);
       _mat4C.multiplyMatrices(_mat4B, _mat4A);
       _mat4C.multiply(visual.group.matrixWorld);
-      applyTransformToVertices(
-        nextMesh,
-        this.editDragStartVertexIds,
-        _mat4C,
-        [0, 0, 0],
-      );
+      applyTransformToVertices(nextMesh, this.editDragStartVertexIds, _mat4C, [0, 0, 0]);
       affectedVertexIds = this.editDragStartVertexIds;
     }
 
@@ -3164,8 +3011,7 @@ export class ViewportEngine {
     } else {
       const isSlideSession =
         !this.modalTransformCommitOnRelease &&
-        (this.modalTransformMode === 'vertex_slide' ||
-          this.modalTransformMode === 'edge_slide');
+        (this.modalTransformMode === 'vertex_slide' || this.modalTransformMode === 'edge_slide');
       if (isSlideSession && !this.slideSessionBaseMesh) {
         this.slideSessionBaseMesh = visual.baseEditableMesh.clone();
         this.slideSessionFactor = 0;
@@ -3188,9 +3034,7 @@ export class ViewportEngine {
       for (const v of this.editDragStartMesh.vertices) {
         this.editDragStartVertexPositions.set(v.id, [...v.position]);
       }
-      const centroidLocal = this.editDragStartMesh.computeCentroid(
-        this.editDragStartVertexIds,
-      );
+      const centroidLocal = this.editDragStartMesh.computeCentroid(this.editDragStartVertexIds);
       if (!centroidLocal) {
         this.isModalDragging = false;
         this.editDragStartMesh = null;
@@ -3208,10 +3052,7 @@ export class ViewportEngine {
         this.proportionalDragFalloffUsed = '';
         this.refreshProportionalDragWeights(true);
       } else if (this.modalTransformMode === 'vertex_slide') {
-        const plan = buildVertexSlidePlan(
-          this.editDragStartMesh,
-          this.editDragStartVertexIds,
-        );
+        const plan = buildVertexSlidePlan(this.editDragStartMesh, this.editDragStartVertexIds);
         if (!plan.valid) {
           this.isModalDragging = false;
           this.editDragStartMesh = null;
@@ -3233,10 +3074,7 @@ export class ViewportEngine {
           );
         }
       } else if (this.modalTransformMode === 'edge_slide') {
-        const plan = buildEdgeSlidePlan(
-          this.editDragStartMesh,
-          this.selectedComponentIds,
-        );
+        const plan = buildEdgeSlidePlan(this.editDragStartMesh, this.selectedComponentIds);
         if (!plan.valid) {
           this.isModalDragging = false;
           this.editDragStartMesh = null;
@@ -3267,23 +3105,14 @@ export class ViewportEngine {
           this.axisConstraint === 'y' ? 1 : 0,
           this.axisConstraint === 'z' ? 1 : 0,
         );
-        const side = new THREE.Vector3().crossVectors(
-          camDir,
-          this.modalAxisDirWorld,
-        );
-        let planeNormal = new THREE.Vector3().crossVectors(
-          this.modalAxisDirWorld,
-          side,
-        );
+        const side = new THREE.Vector3().crossVectors(camDir, this.modalAxisDirWorld);
+        let planeNormal = new THREE.Vector3().crossVectors(this.modalAxisDirWorld, side);
         if (planeNormal.lengthSq() < 1e-6) {
           planeNormal.copy(camDir).negate();
         } else {
           planeNormal.normalize();
         }
-        this.modalDragPlane.setFromNormalAndCoplanarPoint(
-          planeNormal,
-          this.editDragStartAnchorPos,
-        );
+        this.modalDragPlane.setFromNormalAndCoplanarPoint(planeNormal, this.editDragStartAnchorPos);
       }
 
       if (
@@ -3304,19 +3133,17 @@ export class ViewportEngine {
         : this.modalTransformMode === 'edge_slide'
           ? 'Deslizar arista'
           : 'Mover (G)';
-      const pct = Math.round(this.modalSlideStartFactor * 100);
-      this.callbacks.onModalTransformStatusChange?.({
-        active: true,
-        mode: this.modalTransformMode,
-        label: modeLabel,
-        deltaText:
-          this.modalTransformMode === 'move'
-            ? '0.00, 0.00, 0.00'
-            : `${pct >= 0 ? '+' : ''}${pct}%`,
-        clamped: false,
-      });
-      this.requestRender();
-    }
+    const pct = Math.round(this.modalSlideStartFactor * 100);
+    this.callbacks.onModalTransformStatusChange?.({
+      active: true,
+      mode: this.modalTransformMode,
+      label: modeLabel,
+      deltaText:
+        this.modalTransformMode === 'move' ? '0.00, 0.00, 0.00' : `${pct >= 0 ? '+' : ''}${pct}%`,
+      clamped: false,
+    });
+    this.requestRender();
+  }
 
   private computeScreenSlideAxis2D(
     visual: ObjectVisual,
@@ -3345,30 +3172,21 @@ export class ViewportEngine {
     const samples: ProjectedRailSample[] = [];
     for (const rail of rails) {
       const liveV = visual.baseEditableMesh.getVertex(rail.vertexId);
-      const p0World = new THREE.Vector3(...rail.startPos).applyMatrix4(
-        visual.group.matrixWorld,
-      );
+      const p0World = new THREE.Vector3(...rail.startPos).applyMatrix4(visual.group.matrixWorld);
       const p0 = this.projectWorldPointToCanvasPx(p0World);
       const pCursorRef = liveV
         ? this.projectWorldPointToCanvasPx(
-            new THREE.Vector3(...liveV.position).applyMatrix4(
-              visual.group.matrixWorld,
-            ),
+            new THREE.Vector3(...liveV.position).applyMatrix4(visual.group.matrixWorld),
           )
         : p0;
-      const distToStart = Math.hypot(
-        pCursorRef.x - startPxX,
-        pCursorRef.y - startPxY,
-      );
+      const distToStart = Math.hypot(pCursorRef.x - startPxX, pCursorRef.y - startPxY);
       const weight = 1 / (1 + distToStart / 80);
 
       let vAx = 0;
       let vAy = 0;
       let hasA = false;
       if (rail.railA) {
-        const pAWorld = new THREE.Vector3(...rail.railA).applyMatrix4(
-          visual.group.matrixWorld,
-        );
+        const pAWorld = new THREE.Vector3(...rail.railA).applyMatrix4(visual.group.matrixWorld);
         const pA = this.projectWorldPointToCanvasPx(pAWorld);
         vAx = pA.x - p0.x;
         vAy = pA.y - p0.y;
@@ -3379,9 +3197,7 @@ export class ViewportEngine {
       let vBy = 0;
       let hasB = false;
       if (rail.railB) {
-        const pBWorld = new THREE.Vector3(...rail.railB).applyMatrix4(
-          visual.group.matrixWorld,
-        );
+        const pBWorld = new THREE.Vector3(...rail.railB).applyMatrix4(visual.group.matrixWorld);
         const pB = this.projectWorldPointToCanvasPx(pBWorld);
         vBx = pB.x - p0.x;
         vBy = pB.y - p0.y;
@@ -3457,10 +3273,8 @@ export class ViewportEngine {
           }
         }
       }
-      const avgPos =
-        projPosW > 0 ? projPosSum / projPosW : Math.abs(avgAx * dirX + avgAy * dirY);
-      const avgNeg =
-        projNegW > 0 ? projNegSum / projNegW : Math.abs(avgBx * dirX + avgBy * dirY);
+      const avgPos = projPosW > 0 ? projPosSum / projPosW : Math.abs(avgAx * dirX + avgAy * dirY);
+      const avgNeg = projNegW > 0 ? projNegSum / projNegW : Math.abs(avgBx * dirX + avgBy * dirY);
       lenPosPx = Math.max(24, avgPos || avgNeg || 75);
       lenNegPx = Math.max(24, avgNeg || lenPosPx);
     } else if (samples.length > 0) {
@@ -3514,8 +3328,7 @@ export class ViewportEngine {
           this.modalStartX,
           this.modalStartY,
         );
-        const signedChainDot =
-          (dragDx * chainAxis.dirX + dragDy * chainAxis.dirY) / dragLen;
+        const signedChainDot = (dragDx * chainAxis.dirX + dragDy * chainAxis.dirY) / dragLen;
         const chainCos = Math.abs(signedChainDot);
 
         let maxLongCos = 0;
@@ -3587,8 +3400,7 @@ export class ViewportEngine {
     const proj = dragDx * axis.dirX + dragDy * axis.dirY;
     const lenPos = Math.max(24, axis.lenPosPx);
     const lenNeg = Math.max(24, axis.lenNegPx);
-    const startOffsetPx =
-      startFactor >= 0 ? startFactor * lenPos : startFactor * lenNeg;
+    const startOffsetPx = startFactor >= 0 ? startFactor * lenPos : startFactor * lenNeg;
     const currOffsetPx = startOffsetPx + proj;
     return currOffsetPx >= 0 ? currOffsetPx / lenPos : currOffsetPx / lenNeg;
   }
@@ -3611,9 +3423,7 @@ export class ViewportEngine {
         _modalDelta.subVectors(_modalCurrPoint, this.modalDragStartPointWorld);
       } else {
         // Fallback screen-aligned translation at grazing camera angles
-        const dist = this.activeCamera.position.distanceTo(
-          this.editDragStartAnchorPos,
-        );
+        const dist = this.activeCamera.position.distanceTo(this.editDragStartAnchorPos);
         const scale = Math.max(0.002, dist * 0.002);
         _modalCamRight.set(1, 0, 0).applyQuaternion(this.activeCamera.quaternion);
         _modalCamUp.set(0, 1, 0).applyQuaternion(this.activeCamera.quaternion);
@@ -3646,10 +3456,7 @@ export class ViewportEngine {
           rotation: [g.rotation.x, g.rotation.y, g.rotation.z],
           scale: [g.scale.x, g.scale.y, g.scale.z],
         };
-        this.syncLiveObjectTransformAndMirrors(
-          this.selectedObjectId,
-          liveTransform,
-        );
+        this.syncLiveObjectTransformAndMirrors(this.selectedObjectId, liveTransform);
       } else if (this.editDragStartMesh) {
         this.applyModalMoveEditMesh(visual, _modalDelta);
       }
@@ -3677,12 +3484,11 @@ export class ViewportEngine {
       const dragLen = Math.hypot(dragDx, dragDy);
       this.modalMoved = true;
 
-      if (!this.modalParametricVertexSlidePlan || (!this.modalVertexSlideAxisLocked && dragLen < 12)) {
-        const prefDir = this.resolveVertexSlidePreferredDirLocal(
-          visual,
-          dragDx,
-          dragDy,
-        );
+      if (
+        !this.modalParametricVertexSlidePlan ||
+        (!this.modalVertexSlideAxisLocked && dragLen < 12)
+      ) {
+        const prefDir = this.resolveVertexSlidePreferredDirLocal(visual, dragDx, dragDy);
         if (prefDir) {
           const pPlan = buildParametricVertexSlidePlan(
             this.editDragStartMesh,
@@ -3705,11 +3511,7 @@ export class ViewportEngine {
       }
 
       if (!this.modalParametricVertexSlidePlan || !this.modalSlideAxis2D) {
-        this.commitEditedMeshToVisual(
-          visual,
-          this.editDragStartMesh.clone(),
-          new Set(),
-        );
+        this.commitEditedMeshToVisual(visual, this.editDragStartMesh.clone(), new Set());
         this.callbacks.onModalTransformStatusChange?.({
           active: true,
           mode: 'vertex_slide',
@@ -3829,9 +3631,7 @@ export class ViewportEngine {
         this.slideSessionFactor = this.lastAppliedSlideFactor;
         this.slideSessionHasChanges = Math.abs(this.slideSessionFactor) > 1e-5;
         if (activeMode === 'vertex_slide') {
-          this.slideSessionVertexSlidePlan = this.slideSessionHasChanges
-            ? usedVertexPlan
-            : null;
+          this.slideSessionVertexSlidePlan = this.slideSessionHasChanges ? usedVertexPlan : null;
         }
         const pct = Math.round(this.slideSessionFactor * 100);
         this.callbacks.onModalTransformStatusChange?.({
@@ -3928,9 +3728,7 @@ export class ViewportEngine {
     this.modalSlideAxis2D = null;
     this.callbacks.onModalTransformStatusChange?.(null);
 
-    const visual = this.selectedObjectId
-      ? this.visuals.get(this.selectedObjectId)
-      : undefined;
+    const visual = this.selectedObjectId ? this.visuals.get(this.selectedObjectId) : undefined;
 
     if (this.workMode === 'object' && this.objectDragStartTransform) {
       const before = this.objectDragStartTransform;
@@ -3941,10 +3739,7 @@ export class ViewportEngine {
         visual.group.scale.set(...before.scale);
         this.syncLiveObjectTransformAndMirrors(this.selectedObjectId, before);
       }
-    } else if (
-      this.workMode === 'edit' &&
-      (this.slideSessionBaseMesh || this.editDragStartMesh)
-    ) {
+    } else if (this.workMode === 'edit' && (this.slideSessionBaseMesh || this.editDragStartMesh)) {
       const before = (this.slideSessionBaseMesh ?? this.editDragStartMesh)!;
       this.slideSessionBaseMesh = null;
       this.slideSessionFactor = 0;
@@ -4038,8 +3833,7 @@ export class ViewportEngine {
       this.cancelModalTransform();
     }
     this.modalTransformMode = params.modalTransformMode ?? null;
-    this.modalTransformCommitOnRelease =
-      params.modalTransformCommitOnRelease ?? true;
+    this.modalTransformCommitOnRelease = params.modalTransformCommitOnRelease ?? true;
     this.modalSlideClamp = params.modalSlideClamp ?? true;
     if (!this.modalTransformMode) {
       this.slideSessionBaseMesh = null;
@@ -4055,6 +3849,12 @@ export class ViewportEngine {
       ? { ...params.virtualModifiers }
       : { ...EMPTY_MODIFIER_STATE };
     this.gestureManager.setExternalModifiers(this.virtualModifiers);
+    if (this.selectedObjectId !== params.selectedObjectId) {
+      this.sculptCursorLastWorldPoint = null;
+      this.sculptCursorLastWorldNormal = null;
+      this.sculptCursorGroup.visible = false;
+      this.sculptCursorMirrorGroup.visible = false;
+    }
     this.selectedObjectId = params.selectedObjectId;
     const nextSelObjs = new Set<string>(
       params.selectedObjectIds ? Array.from(params.selectedObjectIds) : [],
@@ -4071,12 +3871,24 @@ export class ViewportEngine {
         ...params.sculptSettings,
         symmetry: { ...params.sculptSettings.symmetry },
       };
+      if (this.workMode === 'sculpt' && this.sculptCursorLastWorldPoint && this.selectedObjectId) {
+        this.updateSculptCursorVisual(
+          this.sculptCursorLastWorldPoint,
+          this.sculptCursorLastWorldNormal ?? undefined,
+        );
+      }
     }
     if (this.workMode !== 'sculpt') {
       if (this.sculptStrokeSession) {
         this.finishActiveSculptStroke(true);
       }
       this.sculptCursorGroup.visible = false;
+      this.sculptCursorMirrorGroup.visible = false;
+      this.sculptCursorLastWorldPoint = null;
+      this.sculptCursorLastWorldNormal = null;
+      this.sculptCursorMirrorPoints.forEach((point) => {
+        point.visible = false;
+      });
     }
     this.editSelectionMode = params.editSelectionMode;
     this.selectedComponentIds = new Set(params.selectedComponentIds);
@@ -4084,9 +3896,7 @@ export class ViewportEngine {
     this.axisConstraint = params.axisConstraint;
     this.settings = params.settings;
     const prevProp = this.proportionalSettings;
-    const nextProp = normalizeProportionalSettings(
-      params.settings.proportionalEditing,
-    );
+    const nextProp = normalizeProportionalSettings(params.settings.proportionalEditing);
     const propChanged =
       prevProp.enabled !== nextProp.enabled ||
       Math.abs(prevProp.radius - nextProp.radius) > 1e-6 ||
@@ -4094,10 +3904,7 @@ export class ViewportEngine {
       prevProp.connectedOnly !== nextProp.connectedOnly;
     this.proportionalSettings = nextProp;
     this.displayMode = params.settings.displayMode ?? 'solid';
-    this.xrayTransparency = Math.max(
-      10,
-      Math.min(90, params.settings.xrayTransparency ?? 50),
-    );
+    this.xrayTransparency = Math.max(10, Math.min(90, params.settings.xrayTransparency ?? 50));
     this.showFaceOrientation = Boolean(params.settings.showFaceOrientation);
     this.gestureManager.updateConfig(params.settings.touch);
     this.gestureManager.syncWorkMode(params.workMode);
@@ -4107,17 +3914,14 @@ export class ViewportEngine {
       this.modalTransformMode === 'edge_slide';
     this.loopCutPreviewMode = Boolean(params.loopCutPreviewMode);
     this.loopCutPreviewSegments = params.loopCutPreviewSegments ?? [];
-    this.loopCutPreviewRingEdgeIds = new Set(
-      params.loopCutPreviewRingEdgeIds ?? [],
-    );
+    this.loopCutPreviewRingEdgeIds = new Set(params.loopCutPreviewRingEdgeIds ?? []);
     this.loopCutPreviewFaceIds = new Set(params.loopCutPreviewFaceIds ?? []);
     this.loopCutSlideActive = Boolean(params.loopCutSlideActive);
     if (!this.loopCutPreviewMode || !this.loopCutSlideActive) {
       this.loopCutSlidePointerId = null;
     }
     this.orbitControls.enableRotate =
-      !this.cameraRotationLocked &&
-      !(this.loopCutPreviewMode && this.loopCutSlideActive);
+      !this.cameraRotationLocked && !(this.loopCutPreviewMode && this.loopCutSlideActive);
     this.orbitControls.touches = {
       ONE: this.cameraRotationLocked ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE,
       TWO: THREE.TOUCH.DOLLY_PAN,
@@ -4153,22 +3957,19 @@ export class ViewportEngine {
       visual.locked = objData.locked;
 
       // Keep every selected object under the gizmo in sync while a group drag is live.
-      if (
-        !(
-          this.isAnyTransformDragging() &&
-          this.workMode === 'object' &&
-          (this.selectedObjectId === objData.id ||
-            this.multiObjectDragStartTransforms.has(objData.id))
-        )
-      ) {
+      if (!(
+        this.isAnyTransformDragging() &&
+        this.workMode === 'object' &&
+        (this.selectedObjectId === objData.id ||
+          this.multiObjectDragStartTransforms.has(objData.id))
+      )) {
         visual.group.position.set(...objData.transform.position);
         visual.group.rotation.set(...objData.transform.rotation);
         visual.group.scale.set(...objData.transform.scale);
       }
 
       const isSelected =
-        this.selectedObjectIds.has(objData.id) ||
-        this.boxSelectPreviewObjectIds.has(objData.id);
+        this.selectedObjectIds.has(objData.id) || this.boxSelectPreviewObjectIds.has(objData.id);
 
       // Update mesh geometry, light, or reference image properties
       if (objData.objectType === 'reference_image' && objData.referenceImage) {
@@ -4177,17 +3978,13 @@ export class ViewportEngine {
         this.syncLightVisual(visual, objData, isSelected);
       } else {
         const nextPrimaryMatId = objData.materialId ?? null;
-        if (
-          !(
-            (this.isAnyTransformDragging() ||
-              this.slideSessionBaseMesh !== null) &&
-            this.workMode === 'edit' &&
-            this.selectedObjectId === objData.id
-          )
-        ) {
+        if (!(
+          (this.isAnyTransformDragging() || this.slideSessionBaseMesh !== null) &&
+          this.workMode === 'edit' &&
+          this.selectedObjectId === objData.id
+        )) {
           const modSig = this.buildModifiersSignature(objData, this.sceneTransformRefs);
-          const nextShading: ObjectShadingMode =
-            objData.shading === 'smooth' ? 'smooth' : 'flat';
+          const nextShading: ObjectShadingMode = objData.shading === 'smooth' ? 'smooth' : 'flat';
           if (
             visual.lastMeshData !== objData.mesh ||
             visual.group.userData.meshRevision !== params.meshRevision ||
@@ -4228,8 +4025,7 @@ export class ViewportEngine {
         }
 
         visual.materialId = nextPrimaryMatId;
-        const inEditOnThis =
-          objData.id === params.selectedObjectId && params.workMode === 'edit';
+        const inEditOnThis = objData.id === params.selectedObjectId && params.workMode === 'edit';
         this.applyObjectDisplayMode(visual, isSelected, inEditOnThis, objData);
       }
     }
@@ -4311,11 +4107,7 @@ export class ViewportEngine {
         const startVert = baseRange.start * 3;
         const endVert = (baseRange.start + baseRange.count) * 3;
         for (let vi = startVert; vi < endVert; vi++) {
-          triPositions.push(
-            basePosAttr.getX(vi),
-            basePosAttr.getY(vi),
-            basePosAttr.getZ(vi),
-          );
+          triPositions.push(basePosAttr.getX(vi), basePosAttr.getY(vi), basePosAttr.getZ(vi));
         }
       } else {
         const evalRange = visual.faceToTriangleRange.get(fid);
@@ -4323,19 +4115,13 @@ export class ViewportEngine {
           const startVert = evalRange.start * 3;
           const endVert = (evalRange.start + evalRange.count) * 3;
           for (let vi = startVert; vi < endVert; vi++) {
-            triPositions.push(
-              evalPosAttr.getX(vi),
-              evalPosAttr.getY(vi),
-              evalPosAttr.getZ(vi),
-            );
+            triPositions.push(evalPosAttr.getX(vi), evalPosAttr.getY(vi), evalPosAttr.getZ(vi));
           }
         }
       }
 
       const baseFace = visual.baseEditableMesh.getFace(fid);
-      const sourceMeshForFace = baseFace
-        ? visual.baseEditableMesh
-        : visual.editableMesh;
+      const sourceMeshForFace = baseFace ? visual.baseEditableMesh : visual.editableMesh;
       const faceObj = baseFace ?? visual.editableMesh.getFace(fid);
       if (faceObj && faceObj.vertexIds.length >= 3) {
         const n = faceObj.vertexIds.length;
@@ -4350,25 +4136,18 @@ export class ViewportEngine {
     }
 
     const triGeo = new THREE.BufferGeometry();
-    triGeo.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(triPositions, 3),
-    );
+    triGeo.setAttribute('position', new THREE.Float32BufferAttribute(triPositions, 3));
     this.ngonHighlightMesh.geometry.dispose();
     this.ngonHighlightMesh.geometry = triGeo;
     this.ngonHighlightMesh.visible = triPositions.length > 0;
 
     const edgeGeo = new THREE.BufferGeometry();
-    edgeGeo.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(edgePositions, 3),
-    );
+    edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
     this.ngonHighlightEdges.geometry.dispose();
     this.ngonHighlightEdges.geometry = edgeGeo;
     this.ngonHighlightEdges.visible = edgePositions.length > 0;
 
-    this.ngonOverlayGroup.visible =
-      triPositions.length > 0 || edgePositions.length > 0;
+    this.ngonOverlayGroup.visible = triPositions.length > 0 || edgePositions.length > 0;
   }
 
   private syncSharedMaterials(materials: MaterialAsset[]): void {
@@ -4376,13 +4155,33 @@ export class ViewportEngine {
     for (const mat of materials) {
       this.materialAssetMap.set(mat.id, mat);
       let threeMat = this.sharedMaterials.get(mat.id);
-      const opacity = Math.max(0.02, Math.min(1, mat.opacity ?? 1));
+      const evaluation = mat.nodeGraph
+        ? evaluateMaterialNodeGraph(mat.nodeGraph, mat)
+        : null;
+      const surface: EvaluatedMaterialSurface = evaluation?.ok
+        ? evaluation.surface
+        : {
+            baseColor: mat.baseColor,
+            baseColorTextureUrl: mat.textureDataUrl,
+            textureName: mat.textureName,
+            metallic: mat.metallic,
+            roughness: mat.roughness,
+            opacity: mat.opacity ?? 1,
+            ior: 1.45,
+            specular: 0.5,
+            emissionColor: mat.emissiveColor ?? '#000000',
+            emissionIntensity: mat.emissiveIntensity ?? 0,
+          };
+      const textureDataUrl = surface.baseColorTextureUrl;
+      const opacity = Math.max(0.02, Math.min(1, surface.opacity ?? 1));
       const isTransparent = opacity < 0.999;
       if (!threeMat) {
-        threeMat = new THREE.MeshStandardMaterial({
-          color: mat.textureDataUrl ? '#ffffff' : mat.baseColor,
-          metalness: mat.metallic,
-          roughness: mat.roughness,
+        threeMat = new THREE.MeshPhysicalMaterial({
+          color: textureDataUrl ? '#ffffff' : surface.baseColor,
+          metalness: surface.metallic,
+          roughness: surface.roughness,
+          ior: surface.ior,
+          specularIntensity: surface.specular,
           opacity,
           transparent: isTransparent,
           depthWrite: !isTransparent,
@@ -4391,89 +4190,151 @@ export class ViewportEngine {
           polygonOffsetFactor: 1,
           polygonOffsetUnits: 1,
         });
-        if (mat.emissiveColor && mat.emissiveIntensity) {
-          threeMat.emissive.set(mat.emissiveColor);
-          threeMat.emissiveIntensity = mat.emissiveIntensity;
+        if (surface.emissionColor && surface.emissionIntensity) {
+          threeMat.emissive.set(surface.emissionColor);
+          threeMat.emissiveIntensity = surface.emissionIntensity;
         }
         this.sharedMaterials.set(mat.id, threeMat);
       } else {
-        threeMat.color.set(mat.textureDataUrl ? '#ffffff' : mat.baseColor);
-        threeMat.metalness = mat.metallic;
-        threeMat.roughness = mat.roughness;
+        threeMat.color.set(textureDataUrl ? '#ffffff' : surface.baseColor);
+        threeMat.metalness = surface.metallic;
+        threeMat.roughness = surface.roughness;
+        threeMat.ior = surface.ior;
+        threeMat.specularIntensity = surface.specular;
         if (threeMat.transparent !== isTransparent) {
           threeMat.transparent = isTransparent;
           threeMat.needsUpdate = true;
         }
         threeMat.opacity = opacity;
         threeMat.depthWrite = !isTransparent;
-        if (mat.emissiveColor && mat.emissiveIntensity) {
-          threeMat.emissive.set(mat.emissiveColor);
-          threeMat.emissiveIntensity = mat.emissiveIntensity;
+        if (surface.emissionColor && surface.emissionIntensity) {
+          threeMat.emissive.set(surface.emissionColor);
+          threeMat.emissiveIntensity = surface.emissionIntensity;
         } else {
           threeMat.emissive.setHex(0x000000);
           threeMat.emissiveIntensity = 1;
         }
       }
-      this.syncSharedMaterialTexture(mat, threeMat);
+      this.syncSharedMaterialTexture(
+        mat,
+        threeMat,
+        'map',
+        textureDataUrl,
+        surface.textureTransform,
+      );
+      this.syncSharedMaterialTexture(
+        mat,
+        threeMat,
+        'normalMap',
+        surface.normalTextureUrl,
+        surface.normalTextureTransform,
+      );
+      const normalStrength = surface.normalMapStrength ?? 1;
+      threeMat.normalScale.set(normalStrength, normalStrength);
+      this.syncSharedMaterialTexture(
+        mat,
+        threeMat,
+        'bumpMap',
+        surface.bumpTextureUrl,
+        surface.bumpTextureTransform,
+      );
+      threeMat.bumpScale = surface.bumpScale ?? 1;
     }
   }
 
   private syncSharedMaterialTexture(
     materialAsset: MaterialAsset,
     material: THREE.MeshStandardMaterial,
+    channel: 'map' | 'normalMap' | 'bumpMap',
+    dataUrl: string | undefined,
+    transform?: EvaluatedMaterialSurface['textureTransform'],
   ): void {
-    const dataUrl = materialAsset.textureDataUrl;
-    const current = this.sharedMaterialTextures.get(materialAsset.id);
+    const materialTextures =
+      this.sharedMaterialTextures.get(materialAsset.id) ?? {};
+    const current = materialTextures[channel];
+    const applyTransform = (texture: THREE.Texture) => {
+      const location = transform?.location ?? [0, 0, 0];
+      const rotation = transform?.rotation ?? [0, 0, 0];
+      const scale = transform?.scale ?? [1, 1, 1];
+      texture.offset.set(location[0], location[1]);
+      texture.repeat.set(scale[0], scale[1]);
+      texture.rotation = rotation[2];
+      texture.wrapS =
+        scale[0] === 1 ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+      texture.wrapT =
+        scale[1] === 1 ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+      texture.needsUpdate = true;
+    };
     if (!dataUrl) {
       if (current) {
         current.texture.dispose();
-        this.sharedMaterialTextures.delete(materialAsset.id);
+        delete materialTextures[channel];
+        if (Object.keys(materialTextures).length === 0) {
+          this.sharedMaterialTextures.delete(materialAsset.id);
+        } else {
+          this.sharedMaterialTextures.set(materialAsset.id, materialTextures);
+        }
       }
-      if (material.map) {
-        material.map = null;
+      if (material[channel]) {
+        material[channel] = null;
         material.needsUpdate = true;
       }
       return;
     }
     if (current?.dataUrl === dataUrl) {
-      if (material.map !== current.texture) {
-        material.map = current.texture;
+      applyTransform(current.texture);
+      if (material[channel] !== current.texture) {
+        material[channel] = current.texture;
         material.needsUpdate = true;
       }
       return;
     }
 
     current?.texture.dispose();
-    let texture: THREE.Texture;
-    texture = new THREE.TextureLoader().load(
+    const texture = new THREE.TextureLoader().load(
       dataUrl,
       () => {
-        if (this.sharedMaterialTextures.get(materialAsset.id)?.texture !== texture) {
+        if (
+          this.sharedMaterialTextures.get(materialAsset.id)?.[channel]
+            ?.texture !== texture
+        ) {
           return;
         }
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.needsUpdate = true;
+        texture.colorSpace =
+          channel === 'map' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+        applyTransform(texture);
       },
       undefined,
       (error) => {
-        if (this.sharedMaterialTextures.get(materialAsset.id)?.texture !== texture) {
+        if (
+          this.sharedMaterialTextures.get(materialAsset.id)?.[channel]
+            ?.texture !== texture
+        ) {
           return;
         }
         console.error(
           `No se pudo cargar la textura "${materialAsset.textureName ?? materialAsset.name}".`,
           error,
         );
-        this.sharedMaterialTextures.delete(materialAsset.id);
-        if (material.map === texture) {
-          material.map = null;
+        delete materialTextures[channel];
+        if (Object.keys(materialTextures).length === 0) {
+          this.sharedMaterialTextures.delete(materialAsset.id);
+        } else {
+          this.sharedMaterialTextures.set(materialAsset.id, materialTextures);
+        }
+        if (material[channel] === texture) {
+          material[channel] = null;
           material.needsUpdate = true;
         }
         texture.dispose();
       },
     );
-    texture.colorSpace = THREE.SRGBColorSpace;
-    this.sharedMaterialTextures.set(materialAsset.id, { dataUrl, texture });
-    material.map = texture;
+    texture.colorSpace =
+      channel === 'map' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    applyTransform(texture);
+    materialTextures[channel] = { dataUrl, texture };
+    this.sharedMaterialTextures.set(materialAsset.id, materialTextures);
+    material[channel] = texture;
     material.needsUpdate = true;
   }
 
@@ -4482,7 +4343,8 @@ export class ViewportEngine {
       if (!this.materialAssetMap.has(id)) {
         mat.dispose();
         this.sharedMaterials.delete(id);
-        this.sharedMaterialTextures.get(id)?.texture.dispose();
+        const textures = this.sharedMaterialTextures.get(id);
+        Object.values(textures ?? {}).forEach((entry) => entry?.texture.dispose());
         this.sharedMaterialTextures.delete(id);
       }
     }
@@ -4626,9 +4488,7 @@ export class ViewportEngine {
 
     if (visual.pointLight) {
       visual.pointLight.color.set(lightData.color || '#fff3d6');
-      visual.pointLight.intensity = lightData.enabled
-        ? Math.max(0, lightData.intensity)
-        : 0;
+      visual.pointLight.intensity = lightData.enabled ? Math.max(0, lightData.intensity) : 0;
       visual.pointLight.distance = Math.max(0, lightData.distance);
       visual.pointLight.decay = 2;
     }
@@ -4645,9 +4505,7 @@ export class ViewportEngine {
 
     if (visual.lightWireLines) {
       const mat = visual.lightWireLines.material;
-      mat.color.setHex(
-        isSelected ? 0xff9900 : lightData.enabled ? 0xfbbf24 : 0x646b7a,
-      );
+      mat.color.setHex(isSelected ? 0xff9900 : lightData.enabled ? 0xfbbf24 : 0x646b7a);
       mat.opacity = isSelected ? 1 : 0.72;
     }
   }
@@ -4727,10 +4585,7 @@ export class ViewportEngine {
       group.add(pointLight, lightIconGroup);
 
       const dummyClayMat = new THREE.MeshStandardMaterial();
-      const dummySolid = new THREE.Mesh(
-        new THREE.BufferGeometry(),
-        dummyClayMat,
-      );
+      const dummySolid = new THREE.Mesh(new THREE.BufferGeometry(), dummyClayMat);
       dummySolid.visible = false;
       const dummyWire = new THREE.LineSegments(
         new THREE.BufferGeometry(),
@@ -4775,20 +4630,14 @@ export class ViewportEngine {
         hasFaces: false,
         locked: objData.locked,
       };
-      this.syncLightVisual(
-        visual,
-        objData,
-        objData.id === this.selectedObjectId,
-      );
+      this.syncLightVisual(visual, objData, objData.id === this.selectedObjectId);
       return visual;
     }
 
     if (objData.objectType === 'reference_image' && objData.referenceImage) {
       const ref = objData.referenceImage;
       const aspect =
-        ref.aspectRatio > 0
-          ? ref.aspectRatio
-          : ref.naturalWidth / Math.max(1, ref.naturalHeight);
+        ref.aspectRatio > 0 ? ref.aspectRatio : ref.naturalWidth / Math.max(1, ref.naturalHeight);
       const baseSize = 4;
       const width = aspect >= 1 ? baseSize : baseSize * aspect;
       const height = aspect >= 1 ? baseSize / Math.max(0.05, aspect) : baseSize;
@@ -4824,10 +4673,7 @@ export class ViewportEngine {
 
       // Unused placeholder solidMesh so ObjectVisual contract stays uniform
       const dummyClayMat = new THREE.MeshStandardMaterial();
-      const dummySolid = new THREE.Mesh(
-        new THREE.BufferGeometry(),
-        dummyClayMat,
-      );
+      const dummySolid = new THREE.Mesh(new THREE.BufferGeometry(), dummyClayMat);
       dummySolid.visible = false;
 
       const dummyCollider = new THREE.Mesh(
@@ -4870,11 +4716,7 @@ export class ViewportEngine {
         hasFaces: false,
         locked: objData.locked,
       };
-      this.syncReferenceVisual(
-        visual,
-        objData,
-        objData.id === this.selectedObjectId,
-      );
+      this.syncReferenceVisual(visual, objData, objData.id === this.selectedObjectId);
       return visual;
     }
 
@@ -4903,10 +4745,7 @@ export class ViewportEngine {
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 1,
     });
-    const faceOrientationFrontMesh = new THREE.Mesh(
-      solidGeoInit,
-      faceOrientationFrontMat,
-    );
+    const faceOrientationFrontMesh = new THREE.Mesh(solidGeoInit, faceOrientationFrontMat);
     faceOrientationFrontMesh.visible = false;
     faceOrientationFrontMesh.userData.objectId = objData.id;
 
@@ -4920,10 +4759,7 @@ export class ViewportEngine {
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 1,
     });
-    const faceOrientationBackMesh = new THREE.Mesh(
-      solidGeoInit,
-      faceOrientationBackMat,
-    );
+    const faceOrientationBackMesh = new THREE.Mesh(solidGeoInit, faceOrientationBackMat);
     faceOrientationBackMesh.visible = false;
     faceOrientationBackMesh.userData.objectId = objData.id;
 
@@ -4940,10 +4776,7 @@ export class ViewportEngine {
       depthWrite: false,
       toneMapped: false,
     });
-    const selectionOutline = new THREE.Mesh(
-      solidGeoInit,
-      outlineMaterial,
-    );
+    const selectionOutline = new THREE.Mesh(solidGeoInit, outlineMaterial);
     selectionOutline.visible = false;
     selectionOutline.renderOrder = 1;
     selectionOutline.frustumCulled = false;
@@ -5012,10 +4845,7 @@ export class ViewportEngine {
       shading: objData.shading === 'smooth' ? 'smooth' : 'flat',
       materialId: objData.materialId ?? null,
       modifiers,
-      modifiersSignature: this.buildModifiersSignature(
-        objData,
-        this.sceneTransformRefs,
-      ),
+      modifiersSignature: this.buildModifiersSignature(objData, this.sceneTransformRefs),
       hasActiveModifiers,
       hasFaces: evalMesh.faces.length > 0,
       locked: objData.locked,
@@ -5042,24 +4872,19 @@ export class ViewportEngine {
     const isWireframe = this.displayMode === 'wireframe';
     const isXray = this.displayMode === 'xray';
     const isMaterial = this.displayMode === 'material';
-    const xrayOpacity = Math.max(
-      0.05,
-      Math.min(0.95, 1 - this.xrayTransparency / 100),
-    );
+    const xrayOpacity = Math.max(0.05, Math.min(0.95, 1 - this.xrayTransparency / 100));
     const faceOrientActive =
       this.showFaceOrientation &&
       visual.hasFaces &&
       visual.faceOrientationFrontMesh !== null &&
       visual.faceOrientationBackMesh !== null;
 
-    visual.solidMesh.visible =
-      !faceOrientActive && !isWireframe && visual.hasFaces;
+    visual.solidMesh.visible = !faceOrientActive && !isWireframe && visual.hasFaces;
     visual.solidMesh.castShadow = false;
     visual.solidMesh.receiveShadow = false;
     visual.solidMesh.renderOrder = 0;
     if (visual.selectionOutline) {
-      visual.selectionOutline.visible =
-        this.workMode === 'object' && isSelected && visual.hasFaces;
+      visual.selectionOutline.visible = this.workMode === 'object' && isSelected && visual.hasFaces;
     }
 
     if (isMaterial && objData) {
@@ -5110,11 +4935,7 @@ export class ViewportEngine {
       visual.faceOrientationBackMesh.visible = faceOrientActive;
       if (faceOrientActive) {
         const useTranslucent = isXray || isWireframe;
-        const orientOpacity = isXray
-          ? Math.max(0.18, xrayOpacity)
-          : isWireframe
-            ? 0.36
-            : 1;
+        const orientOpacity = isXray ? Math.max(0.18, xrayOpacity) : isWireframe ? 0.36 : 1;
         const frontMat = visual.faceOrientationFrontMesh.material;
         const backMat = visual.faceOrientationBackMesh.material;
         if (frontMat.transparent !== useTranslucent) {
@@ -5170,9 +4991,7 @@ export class ViewportEngine {
       visual.wireEdges.renderOrder = 2;
     } else if (isXray) {
       visual.wireEdges.visible = true;
-      wireMat.color.setHex(
-        visual.hasFaces ? 0x272d38 : 0xc0c6d0,
-      );
+      wireMat.color.setHex(visual.hasFaces ? 0x272d38 : 0xc0c6d0);
       const wireTransparent = visual.hasFaces;
       if (wireMat.transparent !== wireTransparent) {
         wireMat.transparent = wireTransparent;
@@ -5220,10 +5039,7 @@ export class ViewportEngine {
       return;
     }
     const mesh = visual.editableMesh;
-    const triData = mesh.buildTriangulatedData(
-      visual.shading,
-      visual.materialId ?? '__default__',
-    );
+    const triData = mesh.buildTriangulatedData(visual.shading, visual.materialId ?? '__default__');
 
     visual.hasFaces = triData.triangleToFaceId.length > 0;
     visual.triangleToFaceId = triData.triangleToFaceId;
@@ -5251,11 +5067,7 @@ export class ViewportEngine {
       visual.selectionOutline.geometry.dispose();
       const outlineGeometry = solidGeo.clone();
       const outlineCenter = solidGeo.boundingSphere?.center ?? new THREE.Vector3();
-      outlineGeometry.translate(
-        -outlineCenter.x,
-        -outlineCenter.y,
-        -outlineCenter.z,
-      );
+      outlineGeometry.translate(-outlineCenter.x, -outlineCenter.y, -outlineCenter.z);
       visual.selectionOutline.geometry = outlineGeometry;
       visual.selectionOutline.position.copy(outlineCenter);
       visual.selectionOutline.scale.setScalar(1.015);
@@ -5294,10 +5106,7 @@ export class ViewportEngine {
     }
 
     const wireGeo = new THREE.BufferGeometry();
-    wireGeo.setAttribute(
-      'position',
-      new THREE.BufferAttribute(edgePositions.subarray(0, ptr), 3),
-    );
+    wireGeo.setAttribute('position', new THREE.BufferAttribute(edgePositions.subarray(0, ptr), 3));
     wireGeo.computeBoundingBox();
     wireGeo.computeBoundingSphere();
     visual.wireEdges.geometry.dispose();
@@ -5308,10 +5117,7 @@ export class ViewportEngine {
       visual.baseTriangleToFaceId = baseTriData.triangleToFaceId;
       visual.baseFaceToTriangleRange = baseTriData.faceToTriangleRange;
       const baseGeo = new THREE.BufferGeometry();
-      baseGeo.setAttribute(
-        'position',
-        new THREE.BufferAttribute(baseTriData.positions, 3),
-      );
+      baseGeo.setAttribute('position', new THREE.BufferAttribute(baseTriData.positions, 3));
       baseGeo.computeBoundingBox();
       baseGeo.computeBoundingSphere();
       visual.baseSolidCollider.geometry.dispose();
@@ -5355,8 +5161,7 @@ export class ViewportEngine {
     const xray = this.isXraySelectionActive();
     const isWireframe = this.displayMode === 'wireframe';
     const isXrayMode = this.displayMode === 'xray';
-    const highContrastLight =
-      isWireframe || (isXrayMode && this.xrayTransparency > 35);
+    const highContrastLight = isWireframe || (isXrayMode && this.xrayTransparency > 35);
 
     // 1. All Base Cage Edges
     const allEdgesMat = this.editAllEdgesLine.material as THREE.LineBasicMaterial;
@@ -5406,11 +5211,7 @@ export class ViewportEngine {
     for (const id of this.boxSelectPreviewComponentIds) {
       activeComponentIds.add(id);
     }
-    const derived = computeDerivedEditSelection(
-      mesh,
-      this.editSelectionMode,
-      activeComponentIds,
-    );
+    const derived = computeDerivedEditSelection(mesh, this.editSelectionMode, activeComponentIds);
 
     // 2. Selected + Derived Edges (or traversed Loop Cut ring edges during preview)
     const showLoopRingHighlight =
@@ -5433,9 +5234,7 @@ export class ViewportEngine {
     selEdgeGeo.setPositions(selEdgeCoords);
     this.editSelectedEdgesLine.geometry.dispose();
     this.editSelectedEdgesLine.geometry = selEdgeGeo;
-    this.editSelectedEdgesLine.material.color.setHex(
-      showLoopRingHighlight ? 0x0ea5e9 : 0xff9900,
-    );
+    this.editSelectedEdgesLine.material.color.setHex(showLoopRingHighlight ? 0x0ea5e9 : 0xff9900);
     this.editSelectedEdgesLine.visible = selEdgeCoords.length > 0;
 
     // Seam edges (vivid rose/magenta line + thick instanced bars)
@@ -5500,8 +5299,7 @@ export class ViewportEngine {
     }
 
     // 3. Selected + Derived Faces Overlay (or Loop Cut traversed quad faces during preview)
-    const showLoopFaceHighlight =
-      this.loopCutPreviewMode && this.loopCutPreviewFaceIds.size > 0;
+    const showLoopFaceHighlight = this.loopCutPreviewMode && this.loopCutPreviewFaceIds.size > 0;
     const displayFaceIds = this.loopCutPreviewMode
       ? showLoopFaceHighlight
         ? this.loopCutPreviewFaceIds
@@ -5519,25 +5317,17 @@ export class ViewportEngine {
           const startVert = range.start * 3;
           const endVert = (range.start + range.count) * 3;
           for (let vi = startVert; vi < endVert; vi++) {
-            selFacePositions.push(
-              solidPos.getX(vi),
-              solidPos.getY(vi),
-              solidPos.getZ(vi),
-            );
+            selFacePositions.push(solidPos.getX(vi), solidPos.getY(vi), solidPos.getZ(vi));
           }
         }
       }
     }
     const selFaceGeo = new THREE.BufferGeometry();
-    selFaceGeo.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(selFacePositions, 3),
-    );
+    selFaceGeo.setAttribute('position', new THREE.Float32BufferAttribute(selFacePositions, 3));
     this.editSelectedFacesMesh.geometry.dispose();
     this.editSelectedFacesMesh.geometry = selFaceGeo;
     this.editSelectedFacesMesh.visible = selFacePositions.length > 0;
-    const selFacesMat = this.editSelectedFacesMesh
-      .material as THREE.MeshBasicMaterial;
+    const selFacesMat = this.editSelectedFacesMesh.material as THREE.MeshBasicMaterial;
     selFacesMat.color.setHex(showLoopFaceHighlight ? 0x38bdf8 : 0xff9900);
     selFacesMat.depthTest = !xray;
     selFacesMat.opacity = showLoopFaceHighlight
@@ -5551,8 +5341,7 @@ export class ViewportEngine {
           : 0.42;
 
     // 4. Vertices Points (with Proportional Editing falloff weight gradient)
-    const showUnselectedVertices =
-      !this.loopCutPreviewMode && this.editSelectionMode === 'vertex';
+    const showUnselectedVertices = !this.loopCutPreviewMode && this.editSelectionMode === 'vertex';
     const propActive =
       this.proportionalSettings.enabled &&
       this.selectedComponentIds.size > 0 &&
@@ -5592,8 +5381,7 @@ export class ViewportEngine {
     unselGeo.setAttribute('color', new THREE.Float32BufferAttribute(unselColors, 3));
     this.editUnselectedVerticesPoints.geometry.dispose();
     this.editUnselectedVerticesPoints.geometry = unselGeo;
-    const unselVertMat = this.editUnselectedVerticesPoints
-      .material as THREE.PointsMaterial;
+    const unselVertMat = this.editUnselectedVerticesPoints.material as THREE.PointsMaterial;
     unselVertMat.depthTest = !xray;
     unselVertMat.color.setHex(0xffffff);
     this.editUnselectedVerticesPoints.visible = unselVerts.length > 0;
@@ -5602,8 +5390,7 @@ export class ViewportEngine {
     selVertGeo.setAttribute('position', new THREE.Float32BufferAttribute(selVerts, 3));
     this.editSelectedVerticesPoints.geometry.dispose();
     this.editSelectedVerticesPoints.geometry = selVertGeo;
-    const selVertMat = this.editSelectedVerticesPoints
-      .material as THREE.PointsMaterial;
+    const selVertMat = this.editSelectedVerticesPoints.material as THREE.PointsMaterial;
     selVertMat.size = this.editSelectionMode === 'vertex' ? 14 : 11;
     this.editSelectedVerticesPoints.visible = selVerts.length > 0;
 
@@ -5673,10 +5460,7 @@ export class ViewportEngine {
       this.loopCutPreviewBars.visible = true;
 
       const dotGeo = new THREE.BufferGeometry();
-      dotGeo.setAttribute(
-        'position',
-        new THREE.Float32BufferAttribute(dotCoords, 3),
-      );
+      dotGeo.setAttribute('position', new THREE.Float32BufferAttribute(dotCoords, 3));
       this.loopCutPreviewPoints.geometry.dispose();
       this.loopCutPreviewPoints.geometry = dotGeo;
       this.loopCutPreviewPoints.visible = dotCoords.length > 0;
@@ -5689,19 +5473,15 @@ export class ViewportEngine {
     // 6. Slide Rail Visual Guides (for Vertex Slide / Edge Slide via G hold or Move->Slide)
     if (
       !this.loopCutPreviewMode &&
-      (this.modalTransformMode === 'vertex_slide' ||
-        this.modalTransformMode === 'edge_slide')
+      (this.modalTransformMode === 'vertex_slide' || this.modalTransformMode === 'edge_slide')
     ) {
       const refMesh =
-        (!this.modalTransformCommitOnRelease
-          ? this.slideSessionBaseMesh
-          : null) ??
+        (!this.modalTransformCommitOnRelease ? this.slideSessionBaseMesh : null) ??
         this.editDragStartMesh ??
         mesh;
       let guideSegments: [Vec3, Vec3][] = [];
       if (this.modalTransformMode === 'vertex_slide') {
-        const activePlan =
-          this.modalParametricVertexSlidePlan ?? this.slideSessionVertexSlidePlan;
+        const activePlan = this.modalParametricVertexSlidePlan ?? this.slideSessionVertexSlidePlan;
         if (activePlan && activePlan.valid) {
           guideSegments = activePlan.guideSegments;
         } else {
@@ -5712,10 +5492,7 @@ export class ViewportEngine {
           guideSegments = buildVertexSlidePlan(refMesh, vIds).guideSegments;
         }
       } else {
-        guideSegments = buildEdgeSlidePlan(
-          refMesh,
-          this.selectedComponentIds,
-        ).guideSegments;
+        guideSegments = buildEdgeSlidePlan(refMesh, this.selectedComponentIds).guideSegments;
       }
       if (guideSegments.length > 0) {
         const coords: number[] = [];
@@ -5723,10 +5500,7 @@ export class ViewportEngine {
           coords.push(a[0], a[1], a[2], b[0], b[1], b[2]);
         }
         const guideGeo = new THREE.BufferGeometry();
-        guideGeo.setAttribute(
-          'position',
-          new THREE.Float32BufferAttribute(coords, 3),
-        );
+        guideGeo.setAttribute('position', new THREE.Float32BufferAttribute(coords, 3));
         this.slideGuideLines.geometry.dispose();
         this.slideGuideLines.geometry = guideGeo;
         this.slideGuideLines.visible = true;
@@ -5787,12 +5561,9 @@ export class ViewportEngine {
 
   private syncGizmoEnabledState(): void {
     if (this.activeDraggingGizmo) {
-      this.transformControls.enabled =
-        this.activeDraggingGizmo === this.transformControls;
-      this.rotateGizmoControls.enabled =
-        this.activeDraggingGizmo === this.rotateGizmoControls;
-      this.scaleGizmoControls.enabled =
-        this.activeDraggingGizmo === this.scaleGizmoControls;
+      this.transformControls.enabled = this.activeDraggingGizmo === this.transformControls;
+      this.rotateGizmoControls.enabled = this.activeDraggingGizmo === this.rotateGizmoControls;
+      this.scaleGizmoControls.enabled = this.activeDraggingGizmo === this.scaleGizmoControls;
       return;
     }
 
@@ -5854,9 +5625,7 @@ export class ViewportEngine {
     ]) {
       if (this.settings?.snapEnabled) {
         ctrl.setTranslationSnap(this.settings.snapTranslateStep);
-        ctrl.setRotationSnap(
-          THREE.MathUtils.degToRad(this.settings.snapRotateDeg),
-        );
+        ctrl.setRotationSnap(THREE.MathUtils.degToRad(this.settings.snapRotateDeg));
         ctrl.setScaleSnap(this.settings.snapScaleStep);
       } else {
         ctrl.setTranslationSnap(null);
@@ -5909,9 +5678,8 @@ export class ViewportEngine {
       selectedIds.add(this.selectedObjectId);
       const selectedVisuals = Array.from(selectedIds)
         .map((id) => this.visuals.get(id))
-        .filter(
-          (item): item is ObjectVisual =>
-            Boolean(item && item.group.visible && !item.locked),
+        .filter((item): item is ObjectVisual =>
+          Boolean(item && item.group.visible && !item.locked),
         );
 
       if (selectedVisuals.length > 1) {
@@ -5920,9 +5688,7 @@ export class ViewportEngine {
         let hasBounds = false;
         for (const selectedVisual of selectedVisuals) {
           selectedVisual.group.updateMatrixWorld(true);
-          const objectBounds = new THREE.Box3().setFromObject(
-            selectedVisual.group,
-          );
+          const objectBounds = new THREE.Box3().setFromObject(selectedVisual.group);
           if (objectBounds.isEmpty()) continue;
           if (hasBounds) {
             bounds.union(objectBounds);
@@ -5992,8 +5758,12 @@ export class ViewportEngine {
     const distance = prevCam.position.distanceTo(target);
 
     if (next === 'orthographic') {
-      const aspect = Math.max(0.1, this.container.clientWidth / Math.max(1, this.container.clientHeight));
-      const frustumHeight = 2 * distance * Math.tan(THREE.MathUtils.degToRad(this.perspectiveCamera.fov / 2));
+      const aspect = Math.max(
+        0.1,
+        this.container.clientWidth / Math.max(1, this.container.clientHeight),
+      );
+      const frustumHeight =
+        2 * distance * Math.tan(THREE.MathUtils.degToRad(this.perspectiveCamera.fov / 2));
       this.orthographicCamera.left = (-frustumHeight * aspect) / 2;
       this.orthographicCamera.right = (frustumHeight * aspect) / 2;
       this.orthographicCamera.top = frustumHeight / 2;
@@ -6114,6 +5884,7 @@ export class ViewportEngine {
     const prevEditVis = this.editOverlayGroup.visible;
     const prevRingVis = this.proportionalRing.visible;
     const prevSculptCursorVis = this.sculptCursorGroup.visible;
+    const prevSculptMirrorVis = this.sculptCursorMirrorGroup.visible;
 
     try {
       tHelper.visible = false;
@@ -6122,13 +5893,10 @@ export class ViewportEngine {
       this.editOverlayGroup.visible = false;
       this.proportionalRing.visible = false;
       this.sculptCursorGroup.visible = false;
+      this.sculptCursorMirrorGroup.visible = false;
 
       this.renderer.render(this.scene, this.activeCamera);
-      return encodeProjectThumbnailFromCanvas(
-        this.renderer.domElement,
-        width,
-        height,
-      );
+      return encodeProjectThumbnailFromCanvas(this.renderer.domElement, width, height);
     } catch {
       return null;
     } finally {
@@ -6138,6 +5906,7 @@ export class ViewportEngine {
       this.editOverlayGroup.visible = prevEditVis;
       this.proportionalRing.visible = prevRingVis;
       this.sculptCursorGroup.visible = prevSculptCursorVis;
+      this.sculptCursorMirrorGroup.visible = prevSculptMirrorVis;
       if (!this.paused) {
         this.requestRender();
       }
@@ -6221,6 +5990,7 @@ export class ViewportEngine {
       if (this.proportionalRingVisible) {
         this.proportionalRing.quaternion.copy(this.activeCamera.quaternion);
       }
+      this.updateSculptCursorScreenSize();
       this.renderer.render(this.scene, this.activeCamera);
 
       const done = () => {
@@ -6309,6 +6079,8 @@ export class ViewportEngine {
     (this.sculptCursorRing.material as THREE.Material).dispose();
     this.sculptCursorCenter.geometry.dispose();
     (this.sculptCursorCenter.material as THREE.Material).dispose();
+    this.sculptCursorMirrorGeometry.dispose();
+    this.sculptCursorMirrorMaterial.dispose();
     this.mergeCursorMarker.geometry.dispose();
     (this.mergeCursorMarker.material as THREE.Material).dispose();
     this.slideGuideLines.geometry.dispose();
@@ -6331,8 +6103,8 @@ export class ViewportEngine {
       sharedMat.dispose();
     }
     this.sharedMaterials.clear();
-    for (const entry of this.sharedMaterialTextures.values()) {
-      entry.texture.dispose();
+    for (const entries of this.sharedMaterialTextures.values()) {
+      Object.values(entries).forEach((entry) => entry?.texture.dispose());
     }
     this.sharedMaterialTextures.clear();
     this.materialAssetMap.clear();

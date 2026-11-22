@@ -147,6 +147,12 @@ import {
   updateActiveScene,
 } from '../core/project/hierarchy';
 import {
+  createDefaultMaterialNodeGraph,
+  evaluateMaterialNodeGraph,
+  normalizeMaterialGraphBaseTextureReference,
+  syncMaterialFieldsToNodeGraph,
+} from '../core/materials/nodeGraph';
+import {
   appendTimelapseStep,
   clearTimelapseForProject,
   copyTimelapseForProject,
@@ -3223,9 +3229,51 @@ export function useModelerStore() {
       markTimelapseOp('update_material', 'Editar material', recordHistory ? 0 : 240);
       setProject((p) => {
         const currentMats = p.materials ?? projectMaterials;
-        const nextMats = currentMats.map((m) =>
-          m.id === materialId ? createMaterialAsset({ ...m, ...patch, id: m.id }, m.name) : m,
-        );
+        const nextMats = currentMats.map((m) => {
+          if (m.id !== materialId) return m;
+          const candidate = createMaterialAsset(
+            { ...m, ...patch, id: m.id },
+            m.name,
+          );
+          const candidateGraph =
+            candidate.nodeGraph ?? createDefaultMaterialNodeGraph(candidate);
+          const nodeGraph = patch.nodeGraph
+            ? candidateGraph
+            : syncMaterialFieldsToNodeGraph(
+                candidateGraph,
+                candidate,
+                Object.keys(patch),
+              );
+          const graphMaterial = createMaterialAsset(
+            { ...candidate, nodeGraph },
+            candidate.name,
+          );
+          const evaluation = evaluateMaterialNodeGraph(
+            nodeGraph,
+            graphMaterial,
+          );
+          const storedNodeGraph = evaluation.ok
+            ? normalizeMaterialGraphBaseTextureReference(
+                nodeGraph,
+                evaluation.surface.baseColorTextureUrl,
+              )
+            : nodeGraph;
+          return evaluation.ok
+            ? createMaterialAsset(
+                {
+                  ...graphMaterial,
+                  ...evaluation.surface,
+                  emissiveColor: evaluation.surface.emissionColor,
+                  emissiveIntensity: evaluation.surface.emissionIntensity,
+                  textureDataUrl:
+                    evaluation.surface.baseColorTextureUrl ?? '',
+                  textureName: evaluation.surface.textureName ?? '',
+                  nodeGraph: storedNodeGraph,
+                },
+                graphMaterial.name,
+              )
+            : graphMaterial;
+        });
         const updatedMat = nextMats.find((m) => m.id === materialId);
         if (!updatedMat) return p;
         const slot = toMaterialSlot(updatedMat);
@@ -3244,7 +3292,7 @@ export function useModelerStore() {
       });
       setHasUnsavedChanges(true);
     },
-    [makeSnapshot, projectMaterials, pushHistory],
+    [makeSnapshot, markTimelapseOp, projectMaterials, pushHistory],
   );
 
   const duplicateMaterial = useCallback(

@@ -3,11 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Box, Crosshair } from 'lucide-react';
+import { Box } from 'lucide-react';
 import { EditableMesh } from '../core/mesh/EditableMesh';
 import {
   computeDerivedEditSelection,
@@ -37,6 +44,10 @@ interface UVSync3DViewportProps {
     id: string,
     additive: boolean,
   ) => void;
+}
+
+export interface UVSync3DViewportHandle {
+  resetCamera: () => void;
 }
 
 function detectSoftwareWebGL(): boolean {
@@ -123,7 +134,10 @@ function distToSegment2D(
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
-export const UVSync3DViewport: React.FC<UVSync3DViewportProps> = ({
+export const UVSync3DViewport = forwardRef<
+  UVSync3DViewportHandle,
+  UVSync3DViewportProps
+>(({
   objectId,
   objectName,
   mesh,
@@ -135,7 +149,7 @@ export const UVSync3DViewport: React.FC<UVSync3DViewportProps> = ({
   islands,
   multiSelectActive = false,
   onPick3DComponent,
-}) => {
+}, ref) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sceneObjectsRef = useRef<{
     renderer: THREE.WebGLRenderer;
@@ -183,7 +197,7 @@ export const UVSync3DViewport: React.FC<UVSync3DViewportProps> = ({
     [mesh, synced3D.ids, synced3D.mode],
   );
 
-  const resetCameraToModel = () => {
+  const resetCameraToModel = useCallback(() => {
     const ctx = sceneObjectsRef.current;
     if (!ctx) return;
     ctx.modelGroup.updateMatrixWorld(true);
@@ -204,7 +218,13 @@ export const UVSync3DViewport: React.FC<UVSync3DViewportProps> = ({
     );
     ctx.controls.update();
     ctx.renderDirty = true;
-  };
+  }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({ resetCamera: resetCameraToModel }),
+    [resetCameraToModel],
+  );
 
   // Initialize Three.js WebGL scene once
   useEffect(() => {
@@ -870,39 +890,6 @@ export const UVSync3DViewport: React.FC<UVSync3DViewportProps> = ({
       data-testid="uv-sync-3d-viewport"
       className="relative flex-1 min-h-0 min-w-0 flex flex-col bg-[#14161b] border-t md:border-t-0 md:border-l border-[#2b2e36] overflow-hidden select-none"
     >
-      {/* Visor 2 Header */}
-      <div className="h-9 px-2.5 bg-[#16181d] border-b border-[#262a33] flex items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Box className="w-3.5 h-3.5 text-[#38bdf8] shrink-0" />
-          <span className="text-[11px] font-bold text-[#e4e6eb] truncate">
-            Visor 2 · Modelo 3D
-          </span>
-          {objectName && (
-            <span className="hidden lg:inline text-[10px] text-[#8e95a2] truncate max-w-[90px]">
-              · {objectName}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span
-            data-testid="uv-sync-3d-count"
-            className="text-[10px] font-mono-tabular text-[#ff9900] font-semibold"
-          >
-            {synced3D.ids.size} sel.
-          </span>
-          <button
-            type="button"
-            data-testid="uv-sync-3d-reset-view"
-            onClick={resetCameraToModel}
-            className="h-6 px-2 rounded bg-[#22252d] hover:bg-[#2c313b] border border-[#323640] text-[10px] font-semibold text-[#cbd5e1] flex items-center gap-1"
-            title="Centrar vista 3D"
-          >
-            <Crosshair className="w-3 h-3 text-[#38bdf8]" />
-            <span>Centrar</span>
-          </button>
-        </div>
-      </div>
-
       {/* Three.js Canvas Mount */}
       <div
         ref={mountRef}
@@ -913,10 +900,20 @@ export const UVSync3DViewport: React.FC<UVSync3DViewportProps> = ({
           WebkitTouchCallout: 'none',
         }}
       >
+        <div className="pointer-events-none absolute top-2 left-2 z-10 flex items-center gap-1.5 px-2 py-1 rounded bg-[#111317]/80 border border-[#2a2e38] text-[10px] font-semibold text-[#cbd5e1]">
+          <Box className="w-3 h-3 text-[#38bdf8]" />
+          Mundo 3D{objectName ? ` · ${objectName}` : ''}
+        </div>
+        <div
+          data-testid="uv-sync-3d-count"
+          className="pointer-events-none absolute top-2 right-2 z-10 px-2 py-1 rounded bg-[#111317]/80 border border-[#2a2e38] text-[10px] font-mono-tabular text-[#ff9900] font-semibold"
+        >
+          {synced3D.ids.size} sel.
+        </div>
         <div className="pointer-events-none absolute bottom-2 left-2 px-2 py-0.5 rounded bg-[#111317]/80 border border-[#2a2e38] text-[10px] text-[#9ca3af]">
           Sincronizado con Editor UV · Toca para seleccionar
         </div>
       </div>
     </div>
   );
-};
+});

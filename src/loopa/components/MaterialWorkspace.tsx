@@ -26,8 +26,7 @@ interface MaterialWorkspaceProps {
   editSelectionMode?: EditSelectionMode;
   selectedComponentIds?: Set<string>;
   reserveTopLeftCorner?: boolean;
-  /** Rendered in the header (e.g. the LOOPA Ecosystem button). */
-  headerAction?: React.ReactNode;
+  toolbarVisible: boolean;
   onSelectObject: (id: string) => void;
   onSetObjectShading: (objectId: string, shading: ObjectShadingMode) => void;
   onSetDisplayMode: (mode: ViewportDisplayMode) => void;
@@ -59,7 +58,6 @@ interface MaterialWorkspaceProps {
   ) => void;
   onUnassignMaterialFromFaces?: (objectId: string, faceIds: Set<string>) => void;
   onSelectFacesByMaterial?: (objectId: string, materialId: string) => void;
-  onReturnToLayout: () => void;
 }
 
 export const MaterialWorkspace: React.FC<MaterialWorkspaceProps> = ({
@@ -73,7 +71,7 @@ export const MaterialWorkspace: React.FC<MaterialWorkspaceProps> = ({
   editSelectionMode = 'vertex',
   selectedComponentIds,
   reserveTopLeftCorner = false,
-  headerAction,
+  toolbarVisible,
   onSelectObject,
   onSetObjectShading,
   onSetDisplayMode,
@@ -88,12 +86,14 @@ export const MaterialWorkspace: React.FC<MaterialWorkspaceProps> = ({
   onAssignMaterialToFaces,
   onUnassignMaterialFromFaces,
   onSelectFacesByMaterial,
-  onReturnToLayout,
 }) => {
   return (
     <aside
       data-testid="material-workspace-panel"
-      className="w-80 shrink-0 h-full bg-[#16181d] border-r border-[#2b2e36] flex flex-col overflow-hidden z-20"
+      aria-hidden={!toolbarVisible}
+      className={`w-80 shrink-0 h-full bg-[#16181d] border-r border-[#2b2e36] flex flex-col overflow-hidden z-20 ${
+        toolbarVisible ? '' : 'hidden'
+      }`}
     >
       {reserveTopLeftCorner && (
         <div
@@ -109,16 +109,6 @@ export const MaterialWorkspace: React.FC<MaterialWorkspaceProps> = ({
           <span className="text-xs font-bold text-[#f3f4f6] truncate">
             Editor de materiales
           </span>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-        {headerAction}
-        <button
-          type="button"
-          onClick={onReturnToLayout}
-          className="h-7 px-2 rounded bg-[#22252d] hover:bg-[#2c313b] border border-[#323640] text-[11px] font-medium text-[#cbd5e1]"
-        >
-          Layout
-        </button>
         </div>
       </div>
 

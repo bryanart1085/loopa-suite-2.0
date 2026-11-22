@@ -22,7 +22,6 @@ import {
   Eye,
   FileBox,
   FilePlus2,
-  Film,
   FlipHorizontal,
   Focus,
   FolderOpen,
@@ -111,16 +110,6 @@ export const RadialActionIcon: React.FC<RadialActionIconProps> = ({
       return <PanelRight className={className} />;
     case 'barhome':
       return <PanelTop className={className} />;
-    case 'windows_menu':
-      return <LayoutGrid className={className} />;
-    case 'ws_layout':
-      return <Box className={className} />;
-    case 'ws_uv':
-      return <Grid3X3 className={className} />;
-    case 'ws_timelapse':
-      return <Film className={className} />;
-    case 'ws_materials':
-      return <Palette className={className} />;
     case 'g_move':
       return (
         <span className="inline-flex items-center justify-center w-4 h-4 rounded border border-current/45 text-[10px] font-bold leading-none">

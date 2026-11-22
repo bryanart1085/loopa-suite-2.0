@@ -15,17 +15,14 @@ import {
   FileBox,
   FilePlus2,
   FileText,
-  Film,
   Focus,
   FolderOpen,
   Grid,
   Grid3X3,
   Image as ImageIcon,
   Layers,
-  LayoutGrid,
   Loader2,
   Lock,
-  Palette,
   PanelRight,
   PanelTop,
   PanelTopClose,
@@ -33,7 +30,6 @@ import {
   Settings,
   Upload,
 } from 'lucide-react';
-import { APP_NAME } from '../config/brand';
 import { EditSelectionMode } from '../core/mesh/operations';
 import {
   CameraProjection,
@@ -44,7 +40,7 @@ import {
 import type { CameraPreset } from '../engine/ViewportEngine';
 import { LoopaSymbol } from './BrandLogo';
 import { LoopaAppIcon } from './ecosystem/LoopaAppIcon';
-import { LOOPA_APPS } from '../core/ecosystem/apps';
+import { LOOPA_APPS, LOOPA_APP_ORDER } from '../core/ecosystem/apps';
 import type { LoopaAppId } from '../core/ecosystem/types';
 import { Share2 } from 'lucide-react';
 import {
@@ -56,7 +52,7 @@ import {
 
 export type WorkspaceId = 'layout' | 'uv_editing' | 'timelapse' | 'materials';
 
-type TopMenuKey = 'file' | 'viewport' | 'windows';
+type TopMenuKey = 'file' | 'viewport' | 'suite';
 
 export interface SceneStatsInfo {
   objectCount: number;
@@ -75,7 +71,6 @@ interface TopBarProps {
   hasUnsavedChanges: boolean;
   saveStatus: SaveStatus;
   lastSaveError?: string | null;
-  activeWorkspace: WorkspaceId;
   barhomeVisible: boolean;
   onToggleBarhome: () => void;
   hasSelectedObject: boolean;
@@ -115,44 +110,9 @@ interface TopBarProps {
   onSelectCameraPreset: (preset: CameraPreset) => void;
   onFocusSelected: () => void;
   onToggleLiner: () => void;
-  onChangeWorkspace: (workspace: WorkspaceId) => void;
-  timelapseRecordingActive?: boolean;
-  timelapseStepCount?: number;
-  onOpenEcosystemHub?: () => void;
+  onOpenApp: (appId: LoopaAppId) => void;
   activeAppId?: LoopaAppId;
 }
-
-const WORKSPACE_OPTIONS: {
-  id: WorkspaceId;
-  label: string;
-  description: string;
-  icon: React.ReactNode;
-}[] = [
-  {
-    id: 'layout',
-    label: 'Layout',
-    description: 'Modelado 3D, edición de malla y escena',
-    icon: <Box className="w-4 h-4 text-[#5ecd6e] shrink-0" />,
-  },
-  {
-    id: 'uv_editing',
-    label: 'Editor de UVs',
-    description: 'Despliegue, costuras y edición UV 2D',
-    icon: <Grid3X3 className="w-4 h-4 text-[#38bdf8] shrink-0" />,
-  },
-  {
-    id: 'timelapse',
-    label: 'Timelapse',
-    description: 'Reproducción del proceso y video MP4',
-    icon: <Film className="w-4 h-4 text-[#f59e0b] shrink-0" />,
-  },
-  {
-    id: 'materials',
-    label: 'Editor de materiales',
-    description: 'PBR, color base, rugosidad y acabado',
-    icon: <Palette className="w-4 h-4 text-[#a78bfa] shrink-0" />,
-  },
-];
 
 const CAMERA_VIEW_PRESETS: {
   id: CameraPreset;
@@ -171,7 +131,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   hasUnsavedChanges,
   saveStatus,
   lastSaveError = null,
-  activeWorkspace,
   barhomeVisible,
   onToggleBarhome,
   hasSelectedObject,
@@ -211,10 +170,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSelectCameraPreset,
   onFocusSelected,
   onToggleLiner,
-  onChangeWorkspace,
-  timelapseRecordingActive = false,
-  timelapseStepCount = 0,
-  onOpenEcosystemHub,
+  onOpenApp,
   activeAppId,
 }) => {
   const [openMenu, setOpenMenu] = useState<{
@@ -225,7 +181,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const fileBtnRef = useRef<HTMLButtonElement | null>(null);
   const viewportBtnRef = useRef<HTMLButtonElement | null>(null);
-  const windowsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const suiteBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -266,7 +222,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <>
-      {/* Esquina Superior Izquierda Permanente: Logo LOOPA (Galería) + Botón BARHOME */}
+      {/* Esquina superior izquierda: LOOPA Suite + control de BARHOME */}
       <div
         data-testid="loopa-corner-anchor"
         onPointerDown={(e) => e.stopPropagation()}
@@ -281,10 +237,10 @@ export const TopBar: React.FC<TopBarProps> = ({
           data-testid="loopa-home-logo-btn"
           onClick={() => {
             setOpenMenu(null);
-            if (!demoMode) onReturnToGallery();
+            onReturnToGallery();
           }}
-          aria-label={`Volver a la galería de ${APP_NAME}`}
-          title={`Volver a la galería de proyectos (${APP_NAME})`}
+          aria-label="Volver a LOOPA Suite"
+          title="Volver a LOOPA Suite"
           className="w-10 h-9 rounded-lg bg-[#121418] hover:bg-[#16261a] active:bg-[#1c3322] border border-[#2b2f38] hover:border-[#5ecd6e]/60 flex items-center justify-center shrink-0 transition-colors touch-manipulation"
         >
           <LoopaSymbol size={22} />
@@ -329,7 +285,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         }`}
       >
         <div className="h-12 pl-[102px] pr-2 sm:pr-3.5 flex items-center justify-between gap-2">
-          {/* Left: Collapse start button + 3 Menus (Archivo, Viewport, Ventanas) */}
+          {/* Navegación principal de BARHOME */}
           <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
             <span className="hidden xl:inline text-[10px] font-bold uppercase tracking-wider text-[#6e7685] pr-1 select-none shrink-0">
               BARHOME
@@ -378,22 +334,22 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
               </button>
 
-              {/* 3. VENTANAS */}
+              {/* 3. SUITE */}
               <button
-                ref={windowsBtnRef}
+                ref={suiteBtnRef}
                 type="button"
-                data-testid="topbar-windows-btn"
-                onClick={() => toggleMenu('windows', windowsBtnRef, 268)}
-                aria-expanded={openMenu?.key === 'windows'}
+                data-testid="topbar-suite-btn"
+                onClick={() => toggleMenu('suite', suiteBtnRef, 300)}
+                aria-expanded={openMenu?.key === 'suite'}
                 aria-haspopup="menu"
                 className={`min-h-[36px] px-2.5 sm:px-3 rounded-md border text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors touch-manipulation ${
-                  openMenu?.key === 'windows'
+                  openMenu?.key === 'suite'
                     ? 'bg-[#2c313b] border-[#5ecd6e]/65 text-[#5ecd6e]'
                     : 'bg-[#22252d] hover:bg-[#2a2e38] border-[#323640] text-[#e4e6eb]'
                 }`}
               >
-                <LayoutGrid className="w-4 h-4 text-[#5ecd6e] shrink-0" />
-                <span>Ventanas</span>
+                <LoopaSymbol size={16} />
+                <span>Suite</span>
                 <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
               </button>
             </nav>
@@ -469,11 +425,11 @@ export const TopBar: React.FC<TopBarProps> = ({
               }}
               aria-expanded={showLiner}
               aria-controls="loopa-liner-panel"
-              aria-label={showLiner ? 'Cerrar LINER' : 'Abrir LINER'}
+              aria-label={showLiner ? 'Cerrar Liner' : 'Abrir Liner'}
               title={
                 showLiner
-                  ? 'Cerrar panel LINER (Jerarquía, Modificadores, Materiales)'
-                  : 'Abrir panel LINER (Jerarquía, Modificadores, Materiales)'
+                  ? 'Cerrar panel Liner (Jerarquía, Modificadores)'
+                  : 'Abrir panel Liner (Jerarquía, Modificadores)'
               }
               className={`min-h-[36px] px-2 sm:px-2.5 rounded-md border flex items-center justify-center gap-1 shrink-0 transition-colors touch-manipulation ${
                 showLiner
@@ -487,7 +443,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 }`}
               />
               <span className="hidden lg:inline text-[11px] font-semibold whitespace-nowrap">
-                LINER
+                Liner
               </span>
             </button>
           </div>
@@ -937,30 +893,32 @@ export const TopBar: React.FC<TopBarProps> = ({
             </div>
           )}
 
-          {/* C. VENTANAS (ESPACIOS DE TRABAJO) */}
-          {openMenu.key === 'windows' && (
+          {/* C. SUITE: aplicaciones y herramientas de LOOPA */}
+          {openMenu.key === 'suite' && (
             <div
               role="menu"
-              aria-label="Menú Ventanas"
+              aria-label="Menú Suite"
+              data-testid="menu-suite"
               style={{ left: openMenu.left, top: openMenu.top }}
               onPointerDown={(e) => e.stopPropagation()}
-              className="fixed w-[268px] max-h-[78vh] overflow-y-auto cad-scroll rounded-xl bg-[#181a1f] border border-[#343a47] shadow-2xl p-1.5 space-y-1"
+              className="fixed w-[300px] max-h-[78vh] overflow-y-auto cad-scroll rounded-xl bg-[#181a1f] border border-[#343a47] shadow-2xl p-1.5 space-y-1"
             >
-              <div className="px-2.5 pt-1 pb-0.5 text-[11px] font-semibold text-[#8e95a2]">
-                Espacios de trabajo
+              <div className="px-2.5 pt-1 pb-1 text-[11px] font-semibold text-[#8e95a2]">
+                Aplicaciones LOOPA
               </div>
-              {WORKSPACE_OPTIONS.map((ws) => {
-                const isActive = activeWorkspace === ws.id;
+              {LOOPA_APP_ORDER.map((appId) => {
+                const app = LOOPA_APPS[appId];
+                const isActive = activeAppId === appId;
                 return (
                   <button
-                    key={ws.id}
+                    key={appId}
                     type="button"
-                    role="menuitemradio"
-                    aria-checked={isActive}
-                    data-testid={`workspace-option-${ws.id}`}
+                    role="menuitem"
+                    aria-current={isActive ? 'page' : undefined}
+                    data-testid={`suite-app-${appId}`}
                     onClick={() => {
                       setOpenMenu(null);
-                      onChangeWorkspace(ws.id);
+                      onOpenApp(appId);
                     }}
                     className={`w-full min-h-[46px] px-2.5 py-2 rounded-lg text-left flex items-center justify-between gap-2 transition-colors ${
                       isActive
@@ -969,27 +927,15 @@ export const TopBar: React.FC<TopBarProps> = ({
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="relative flex items-center justify-center shrink-0">
-                        {ws.icon}
-                        {ws.id === 'timelapse' && timelapseRecordingActive && (
-                          <span
-                            aria-hidden="true"
-                            className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#ef4444] ring-2 ring-[#181a1f]"
-                          />
-                        )}
-                      </span>
+                      <LoopaAppIcon appId={appId} className="w-4 h-4 shrink-0" />
                       <div className="min-w-0">
-                        <div className="text-xs font-semibold truncate">
-                          {ws.label}
-                        </div>
-                        <div className="text-[10px] text-[#8e95a2] truncate">
-                          {ws.id === 'timelapse' && timelapseStepCount > 0
-                            ? `${timelapseStepCount} pasos grabados`
-                            : ws.description}
-                        </div>
+                        <div className="text-xs font-semibold truncate">{app.name}</div>
+                        <div className="text-[10px] text-[#8e95a2] truncate">{app.tagline}</div>
                       </div>
                     </div>
-                    {isActive && <Check className="w-4 h-4 text-[#5ecd6e] shrink-0" />}
+                    {isActive && (
+                      <Check className="w-4 h-4 text-[#5ecd6e] shrink-0" />
+                    )}
                   </button>
                 );
               })}

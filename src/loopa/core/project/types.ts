@@ -62,6 +62,47 @@ export interface MaterialSlot {
   metalness: number;
 }
 
+export type MaterialNodeType =
+  | 'material_output'
+  | 'principled_bsdf'
+  | 'image_texture'
+  | 'texture_coordinate'
+  | 'mapping'
+  | 'normal_map'
+  | 'bump'
+  | 'color_ramp'
+  | 'math'
+  | 'mix_color';
+
+export type MaterialNodeValue =
+  | string
+  | number
+  | boolean
+  | null
+  | MaterialNodeValue[]
+  | { [key: string]: MaterialNodeValue };
+
+export interface MaterialNode {
+  id: string;
+  type: MaterialNodeType;
+  position: { x: number; y: number };
+  values: Record<string, MaterialNodeValue>;
+}
+
+export interface MaterialNodeLink {
+  id: string;
+  fromNodeId: string;
+  fromSocket: string;
+  toNodeId: string;
+  toSocket: string;
+}
+
+export interface MaterialNodeGraph {
+  version: 1;
+  nodes: MaterialNode[];
+  links: MaterialNodeLink[];
+}
+
 export interface MaterialAsset {
   id: string;
   name: string;
@@ -73,6 +114,7 @@ export interface MaterialAsset {
   emissiveIntensity?: number;
   textureName?: string;
   textureDataUrl?: string;
+  nodeGraph?: MaterialNodeGraph;
 }
 
 export type SceneObjectType =

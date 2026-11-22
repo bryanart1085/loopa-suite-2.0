@@ -3,13 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { EditableMesh, Vec2 } from '../core/mesh/EditableMesh';
 import {
   UVIsland,
   UVPivotMode,
-  UVSelectionState,
   UVSelectMode,
+  UVSelectionState,
   UVTransformTool,
 } from '../core/uv/types';
 import {
@@ -83,9 +91,18 @@ interface UVEditorCanvasProps {
   onSelectModeChange: (mode: UVSelectMode) => void;
   onTransformToolChange: (tool: UVTransformTool) => void;
   onBoxSelectActiveChange: (active: boolean) => void;
+  onZoomChange?: (zoomPercent: number) => void;
   onCursorUVChange: (uv: Vec2) => void;
   onPlaceCursorDone?: () => void;
   onSelectionChange: (nextSelection: UVSelectionState) => void;
+}
+
+export interface UVEditorCanvasHandle {
+  fit01: () => void;
+  frameAll: () => void;
+  resetView: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
 }
 
 function clampZoom(z: number): number {
@@ -108,7 +125,10 @@ const ISLAND_COLORS = [
   '#34d399',
 ];
 
-export const UVEditorCanvas: React.FC<UVEditorCanvasProps> = ({
+export const UVEditorCanvas = forwardRef<
+  UVEditorCanvasHandle,
+  UVEditorCanvasProps
+>(({
   mesh,
   selection,
   transformTool,
@@ -131,10 +151,11 @@ export const UVEditorCanvas: React.FC<UVEditorCanvasProps> = ({
   onSelectModeChange,
   onTransformToolChange,
   onBoxSelectActiveChange,
+  onZoomChange,
   onCursorUVChange,
   onPlaceCursorDone,
   onSelectionChange,
-}) => {
+}, ref) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasSize, setCanvasSize] = useState<{ w: number; h: number }>({
@@ -366,6 +387,22 @@ export const UVEditorCanvas: React.FC<UVEditorCanvasProps> = ({
   const handleResetView = useCallback(() => {
     handleFit01();
   }, [handleFit01]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      fit01: handleFit01,
+      frameAll: handleFrameAll,
+      resetView: handleResetView,
+      zoomIn: () => setZoom((z) => clampZoom(z * 1.25)),
+      zoomOut: () => setZoom((z) => clampZoom(z * 0.8)),
+    }),
+    [handleFit01, handleFrameAll, handleResetView],
+  );
+
+  useEffect(() => {
+    onZoomChange?.(Math.round((zoom / 340) * 100));
+  }, [onZoomChange, zoom]);
 
   // Initial fit on mount
   const hasFittedRef = useRef(false);
@@ -1514,8 +1551,8 @@ export const UVEditorCanvas: React.FC<UVEditorCanvasProps> = ({
 
   return (
     <div className="relative flex-1 min-w-0 min-h-0 bg-[#14161b] flex flex-col overflow-hidden">
-      {/* Header bar with select modes, sub-modes, touch modifiers & zoom framing */}
-      <div className="min-h-11 bg-[#181a1f] border-b border-[#2b2e36] px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 z-10">
+      {/* Header controls now live in UVToolToolbar. */}
+      <div className="hidden">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[10px] font-bold uppercase tracking-wider text-[#8e95a2] pr-1 hidden xl:inline">
             Visor 1 · Editor UV
@@ -1771,6 +1808,9 @@ export const UVEditorCanvas: React.FC<UVEditorCanvasProps> = ({
 
       {/* Interactive 2D Canvas Area */}
       <div ref={containerRef} className="flex-1 min-h-0 relative">
+        <div className="pointer-events-none absolute top-2 left-2 z-10 px-2 py-1 rounded bg-[#111317]/80 border border-[#2a2e38] text-[10px] font-semibold text-[#cbd5e1]">
+          Mapa UV
+        </div>
         <canvas
           ref={canvasRef}
           data-testid="uv-editor-canvas"
@@ -1828,4 +1868,6 @@ export const UVEditorCanvas: React.FC<UVEditorCanvasProps> = ({
       </div>
     </div>
   );
-};
+});
+
+UVEditorCanvas.displayName = 'UVEditorCanvas';

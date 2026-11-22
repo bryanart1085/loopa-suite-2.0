@@ -18,7 +18,6 @@ import {
   Layers,
   Lock,
   MoreVertical,
-  Palette,
   Pencil,
   Plus,
   Pyramid,
@@ -46,14 +45,12 @@ import {
 import {
   CollectionData,
   LightData,
-  MaterialAsset,
   ObjectShadingMode,
   ObjectTransform,
   ReferenceImageData,
   ReferenceImageOrientation,
   SceneData,
   SceneObjectData,
-  ViewportDisplayMode,
   WorkMode,
 } from '../core/project/types';
 import {
@@ -61,7 +58,6 @@ import {
   ModifierSlot,
   ModifierType,
 } from '../core/modifiers/types';
-import { MaterialPanel } from './MaterialPanel';
 import { ModifierStackPanel } from './ModifierStackPanel';
 import { NumericFieldInput } from './NumericFieldInput';
 
@@ -77,7 +73,6 @@ interface LinerPanelProps {
   editSelectionMode: EditSelectionMode;
   selectedComponentIds: Set<string>;
   liveTransformOverride: { id: string; transform: ObjectTransform } | null;
-  onSelectObject: (id: string) => void;
   onSelectObjectInScene: (
     sceneId: string,
     objectId: string,
@@ -148,38 +143,8 @@ interface LinerPanelProps {
   onApplyModifier: (objectId: string, modifierId: string) => void;
   onRecalculateNormalsOutside?: (objectId: string) => void;
   onFlipNormals?: (objectId: string) => void;
-  materials: MaterialAsset[];
-  displayMode: ViewportDisplayMode;
-  onCreateMaterial: (
-    initial?: Partial<Omit<MaterialAsset, 'id'>>,
-    assignToSelected?: boolean,
-  ) => MaterialAsset;
-  onRenameMaterial: (materialId: string, name: string) => void;
-  onPushMaterialHistory: () => void;
-  onUpdateMaterial: (
-    materialId: string,
-    patch: Partial<Omit<MaterialAsset, 'id'>>,
-    recordHistory?: boolean,
-  ) => void;
-  onDuplicateMaterial: (
-    materialId: string,
-    assignToSelected?: boolean,
-  ) => MaterialAsset | null;
-  onDeleteMaterial: (materialId: string) => { ok: boolean; error?: string };
-  getMaterialUsageSummary?: (materialId: string) => {
-    objectCount: number;
-    faceCount: number;
-  };
-  onAssignMaterialToObjects: (objectIds: string[], materialId: string) => void;
-  onAssignMaterialToFaces?: (
-    objectId: string,
-    faceIds: Set<string>,
-    materialId: string,
-  ) => void;
-  onUnassignMaterialFromFaces?: (objectId: string, faceIds: Set<string>) => void;
-  onSelectFacesByMaterial?: (objectId: string, materialId: string) => void;
   onSetObjectShading: (objectId: string, shading: ObjectShadingMode) => void;
-  onTabChange?: (tab: 'hierarchy' | 'modifiers' | 'materials') => void;
+  onTabChange?: (tab: 'hierarchy' | 'modifiers') => void;
   ngonHighlightActive?: boolean;
   ngonHighlightDismissed?: boolean;
   onDismissNgonHighlight?: (modifierId: string) => void;
@@ -298,19 +263,6 @@ export const LinerPanel: React.FC<LinerPanelProps> = ({
   onApplyModifier,
   onRecalculateNormalsOutside,
   onFlipNormals,
-  materials,
-  displayMode,
-  onCreateMaterial,
-  onRenameMaterial,
-  onPushMaterialHistory,
-  onUpdateMaterial,
-  onDuplicateMaterial,
-  onDeleteMaterial,
-  getMaterialUsageSummary,
-  onAssignMaterialToObjects,
-  onAssignMaterialToFaces,
-  onUnassignMaterialFromFaces,
-  onSelectFacesByMaterial,
   onSetObjectShading,
   onTabChange,
   ngonHighlightActive = false,
@@ -319,11 +271,11 @@ export const LinerPanel: React.FC<LinerPanelProps> = ({
   onRestoreNgonHighlight,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<
-    'hierarchy' | 'modifiers' | 'materials'
-  >('hierarchy');
+  const [activeTab, setActiveTab] = useState<'hierarchy' | 'modifiers'>(
+    'hierarchy',
+  );
 
-  const selectTab = (tab: 'hierarchy' | 'modifiers' | 'materials') => {
+  const selectTab = (tab: 'hierarchy' | 'modifiers') => {
     setActiveTab(tab);
     onTabChange?.(tab);
   };
@@ -894,12 +846,12 @@ export const LinerPanel: React.FC<LinerPanelProps> = ({
       onPointerDown={(e) => e.stopPropagation()}
       className={`shrink-0 h-full bg-[#181a1f] flex flex-col overflow-hidden z-20 relative transition-[width,opacity] duration-200 ease-out ${
         isOpen
-          ? 'w-[min(272px,78vw)] sm:w-72 border-l border-[#2b2e36] opacity-100'
+          ? 'w-[min(272px,78vw)] sm:w-72 border-l border-[#2b2e36] opacity-100 pointer-events-auto'
           : 'w-0 border-l-0 opacity-0 pointer-events-none'
       }`}
     >
       <div className="w-[min(272px,78vw)] sm:w-72 h-full flex flex-col min-h-0">
-        {/* Encabezado LINER + Pestañas (Jerarquía | Modificadores | Materiales) */}
+        {/* Encabezado LINER + Pestañas (Jerarquía | Modificadores) */}
         <div
           data-testid="liner-header"
           className="px-2.5 pt-2 pb-1.5 border-b border-[#2b2e36] bg-[#15171b] shrink-0 space-y-1.5"
@@ -925,7 +877,7 @@ export const LinerPanel: React.FC<LinerPanelProps> = ({
           <div
             role="tablist"
             aria-label="Secciones de LINER"
-            className="grid grid-cols-3 gap-0.5 p-0.5 rounded-md bg-[#101216] border border-[#262932]"
+            className="grid grid-cols-2 gap-0.5 p-0.5 rounded-md bg-[#101216] border border-[#262932]"
           >
             <button
               id="liner-tab-hierarchy"
@@ -962,24 +914,6 @@ export const LinerPanel: React.FC<LinerPanelProps> = ({
               <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
               <span className="truncate">Modif.</span>
             </button>
-            <button
-              id="liner-tab-materials"
-              data-testid="liner-tab-materials"
-              type="button"
-              role="tab"
-              aria-selected={activeTab === 'materials'}
-              aria-controls="liner-tabpanel-materials"
-              onClick={() => selectTab('materials')}
-              title="Materiales"
-              className={`h-8 px-1 rounded text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors touch-manipulation ${
-                activeTab === 'materials'
-                  ? 'bg-[#2a2f3a] text-[#5ecd6e]'
-                  : 'text-[#9ca3af] hover:text-white'
-              }`}
-            >
-              <Palette className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Materiales</span>
-            </button>
           </div>
         </div>
 
@@ -1009,36 +943,6 @@ export const LinerPanel: React.FC<LinerPanelProps> = ({
             ngonHighlightDismissed={ngonHighlightDismissed}
             onDismissNgonHighlight={onDismissNgonHighlight}
             onRestoreNgonHighlight={onRestoreNgonHighlight}
-          />
-        </div>
-      ) : activeTab === 'materials' ? (
-        /* PESTAÑA MATERIALES */
-        <div
-          id="liner-tabpanel-materials"
-          role="tabpanel"
-          aria-labelledby="liner-tab-materials"
-          className="flex-1 min-h-0 flex flex-col"
-        >
-          <MaterialPanel
-            materials={materials}
-            selectedObject={selectedObj}
-            selectedObjectIds={selectedObjectIds}
-            objects={objects}
-            displayMode={displayMode}
-            workMode={workMode}
-            editSelectionMode={editSelectionMode}
-            selectedComponentIds={selectedComponentIds}
-            onCreateMaterial={onCreateMaterial}
-            onRenameMaterial={onRenameMaterial}
-            onPushMaterialHistory={onPushMaterialHistory}
-            onUpdateMaterial={onUpdateMaterial}
-            onDuplicateMaterial={onDuplicateMaterial}
-            onDeleteMaterial={onDeleteMaterial}
-            getMaterialUsageSummary={getMaterialUsageSummary}
-            onAssignMaterialToObjects={onAssignMaterialToObjects}
-            onAssignMaterialToFaces={onAssignMaterialToFaces}
-            onUnassignMaterialFromFaces={onUnassignMaterialFromFaces}
-            onSelectFacesByMaterial={onSelectFacesByMaterial}
           />
         </div>
       ) : (

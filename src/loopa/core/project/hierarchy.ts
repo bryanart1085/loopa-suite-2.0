@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { createCubeMesh, createPrimitiveMesh, PRIMITIVE_LABELS } from '../mesh/primitives';
 import { normalizeModifierSlot } from '../modifiers/types';
 import { generateTemplateThumbnailDataUrl } from './thumbnail';
+import { normalizeMaterialNodeGraph } from '../materials/nodeGraph';
 import {
   CollectionData,
   LightData,
@@ -111,6 +112,7 @@ export function createMaterialAsset(
   ) {
     asset.textureDataUrl = partial.textureDataUrl;
   }
+  asset.nodeGraph = normalizeMaterialNodeGraph(partial?.nodeGraph, asset);
   return asset;
 }
 

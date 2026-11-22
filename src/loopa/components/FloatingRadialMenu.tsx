@@ -8,7 +8,6 @@ import {
   CopyPlus,
   Download,
   FileBox,
-  Film,
   Focus,
   Grid,
   Grid3X3,
@@ -16,7 +15,6 @@ import {
   Image as ImageIcon,
   Layers,
   Lock,
-  Palette,
   PanelRight,
   PanelTop,
   Plus,
@@ -70,8 +68,7 @@ type RadialSubPickerType =
   | 'barhome_import'
   | 'barhome_export'
   | 'barhome_views'
-  | 'barhome_display'
-  | 'barhome_windows';
+  | 'barhome_display';
 
 export interface FloatingRadialMenuProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
@@ -114,8 +111,6 @@ export interface FloatingRadialMenuProps {
   canRedo: boolean;
   hasUnsavedChanges?: boolean;
   saveStatus?: SaveStatus;
-  timelapseRecordingActive?: boolean;
-  timelapseStepCount?: number;
   selectedObjectShading?: ObjectShadingMode | null;
 
   // Appearance & Position
@@ -208,7 +203,6 @@ export interface FloatingRadialMenuProps {
   onExportObj?: () => void;
   onExportStl?: () => void;
   onReturnToGallery?: () => void;
-  onChangeWorkspace?: (workspace: WorkspaceId) => void;
   onOpenSettings: () => void;
 }
 
@@ -236,33 +230,6 @@ const CAMERA_VIEW_PRESETS: {
   { id: 'left', label: 'Lat. Izq.' },
   { id: 'top', label: 'Superior' },
   { id: 'bottom', label: 'Inferior' },
-];
-
-const WORKSPACE_OPTIONS: {
-  id: WorkspaceId;
-  label: string;
-  description: string;
-}[] = [
-  {
-    id: 'layout',
-    label: 'Layout',
-    description: 'Modelado 3D y escena',
-  },
-  {
-    id: 'uv_editing',
-    label: 'Editor de UVs',
-    description: 'Despliegue y edición UV 2D',
-  },
-  {
-    id: 'timelapse',
-    label: 'Timelapse',
-    description: 'Proceso y video MP4',
-  },
-  {
-    id: 'materials',
-    label: 'Editor de materiales',
-    description: 'PBR y acabado',
-  },
 ];
 
 export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
@@ -304,8 +271,6 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
   canRedo,
   hasUnsavedChanges = false,
   saveStatus = 'saved',
-  timelapseRecordingActive = false,
-  timelapseStepCount = 0,
   selectedObjectShading = null,
   corner,
   size,
@@ -382,7 +347,6 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
   onExportObj,
   onExportStl,
   onReturnToGallery,
-  onChangeWorkspace,
   onOpenSettings,
 }) => {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -564,6 +528,8 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
         : 'delete_only_faces';
 
   const hasUVMesh = Boolean(uvQuickState?.hasMesh);
+  const uvToolsDisabled =
+    !hasUVMesh || (activeWorkspace === 'uv_editing' && workMode !== 'edit');
 
   const getActionMetaState = (
     def: RadialActionDefinition,
@@ -585,9 +551,6 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
         break;
       case 'barhome_open_display_menu':
         active = activeSubPicker === 'barhome_display';
-        break;
-      case 'barhome_open_windows_menu':
-        active = activeSubPicker === 'barhome_windows';
         break;
       case 'save_project':
         active = saveStatus === 'unsaved' || hasUnsavedChanges;
@@ -612,18 +575,6 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
         break;
       case 'barhome_toggle_barhome':
         active = barhomeVisible;
-        break;
-      case 'ws_layout':
-        active = activeWorkspace === 'layout';
-        break;
-      case 'ws_uv_editing':
-        active = activeWorkspace === 'uv_editing';
-        break;
-      case 'ws_timelapse':
-        active = activeWorkspace === 'timelapse';
-        break;
-      case 'ws_materials':
-        active = activeWorkspace === 'materials';
         break;
 
       // Layout Object / Edit tools
@@ -811,51 +762,51 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
       // UV tools
       case 'uv_mode_vertex':
         active = uvQuickState?.selectionMode === 'vertex';
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_mode_edge':
         active = uvQuickState?.selectionMode === 'edge';
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_mode_face':
         active = uvQuickState?.selectionMode === 'face';
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_mode_island':
         active = uvQuickState?.selectionMode === 'island';
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_tool_move':
         active =
           Boolean(uvQuickState) &&
           !uvQuickState?.boxSelectActive &&
           uvQuickState?.transformTool === 'move';
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_tool_rotate':
         active =
           Boolean(uvQuickState) &&
           !uvQuickState?.boxSelectActive &&
           uvQuickState?.transformTool === 'rotate';
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_tool_scale':
         active =
           Boolean(uvQuickState) &&
           !uvQuickState?.boxSelectActive &&
           uvQuickState?.transformTool === 'scale';
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_box_select':
         active = Boolean(uvQuickState?.boxSelectActive);
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_toggle_checker':
         active = Boolean(uvQuickState?.showChecker);
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
       case 'uv_sync_to_3d':
-        disabled = !hasUVMesh || !uvQuickState?.canSyncTo3D;
+        disabled = uvToolsDisabled || !uvQuickState?.canSyncTo3D;
         break;
       case 'uv_unwrap':
       case 'uv_planar':
@@ -866,7 +817,7 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
       case 'uv_deselect_all':
       case 'uv_invert_selection':
       case 'uv_sync_from_3d':
-        disabled = !hasUVMesh;
+        disabled = uvToolsDisabled;
         break;
 
       // Materials Shading
@@ -974,25 +925,6 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
         break;
       case 'barhome_open_display_menu':
         toggleSubPicker('barhome_display');
-        break;
-      case 'barhome_open_windows_menu':
-        toggleSubPicker('barhome_windows');
-        break;
-      case 'ws_layout':
-        closeAll();
-        onChangeWorkspace?.('layout');
-        break;
-      case 'ws_uv_editing':
-        closeAll();
-        onChangeWorkspace?.('uv_editing');
-        break;
-      case 'ws_timelapse':
-        closeAll();
-        onChangeWorkspace?.('timelapse');
-        break;
-      case 'ws_materials':
-        closeAll();
-        onChangeWorkspace?.('materials');
         break;
       case 'display_solid':
         onSelectDisplayMode?.('solid');
@@ -2150,110 +2082,6 @@ export const FloatingRadialMenu: React.FC<FloatingRadialMenuProps> = ({
             </div>
           )}
 
-          {/* BARHOME Sub-Picker Popover: Ventanas / Espacios de trabajo */}
-          {activeSubPicker === 'barhome_windows' && (
-            <div
-              style={{ left: popoverLeft, top: popoverTop }}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="absolute z-50 w-[268px] rounded-xl bg-[#181a1f] border border-[#343a47] shadow-2xl p-2 space-y-1 pointer-events-auto"
-            >
-              <div className="px-1.5 py-1 border-b border-[#272b34] flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-[#cbd5e1]">
-                  Espacios de trabajo
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setActiveSubPicker(null)}
-                  className="w-6 h-6 rounded hover:bg-[#272b35] text-[#9ca3af] hover:text-white flex items-center justify-center"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {WORKSPACE_OPTIONS.map((ws) => {
-                const isActive = activeWorkspace === ws.id;
-                const icon =
-                  ws.id === 'layout' ? (
-                    <Box className="w-4 h-4 text-[#5ecd6e] shrink-0" />
-                  ) : ws.id === 'uv_editing' ? (
-                    <Grid3X3 className="w-4 h-4 text-[#38bdf8] shrink-0" />
-                  ) : ws.id === 'timelapse' ? (
-                    <Film className="w-4 h-4 text-[#f59e0b] shrink-0" />
-                  ) : (
-                    <Palette className="w-4 h-4 text-[#a78bfa] shrink-0" />
-                  );
-
-                return (
-                  <button
-                    key={ws.id}
-                    type="button"
-                    onClick={() => {
-                      closeAll();
-                      onChangeWorkspace?.(ws.id);
-                    }}
-                    className={`w-full min-h-[42px] px-2.5 py-1.5 rounded-lg text-left flex items-center justify-between gap-2 transition-colors ${
-                      isActive
-                        ? 'bg-[#2c313b] border border-[#5ecd6e]/65 text-[#5ecd6e]'
-                        : 'hover:bg-[#252932] border border-transparent text-[#e4e6eb]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="relative flex items-center justify-center shrink-0">
-                        {icon}
-                        {ws.id === 'timelapse' && timelapseRecordingActive && (
-                          <span
-                            aria-hidden="true"
-                            className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#ef4444] ring-2 ring-[#181a1f]"
-                          />
-                        )}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold truncate">
-                          {ws.label}
-                        </div>
-                        <div className="text-[10px] text-[#8e95a2] truncate">
-                          {ws.id === 'timelapse' && timelapseStepCount > 0
-                            ? `${timelapseStepCount} pasos grabados`
-                            : ws.description}
-                        </div>
-                      </div>
-                    </div>
-                    {isActive && (
-                      <Check className="w-4 h-4 text-[#5ecd6e] shrink-0" />
-                    )}
-                  </button>
-                );
-              })}
-
-              <div className="pt-1 border-t border-[#272b34] flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onToggleBarhome?.();
-                    closeAll();
-                  }}
-                  className="flex-1 min-h-[34px] px-2 rounded-lg bg-[#1e2128] hover:bg-[#272b35] text-[11px] font-medium text-[#cbd5e1] flex items-center justify-center gap-1.5 transition-colors"
-                >
-                  <PanelTop className="w-3.5 h-3.5 text-[#5ecd6e] shrink-0" />
-                  <span>{barhomeVisible ? 'Ocultar BARHOME' : 'Mostrar BARHOME'}</span>
-                </button>
-                {!demoMode && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeAll();
-                      onReturnToGallery?.();
-                    }}
-                    className="min-h-[34px] px-2.5 rounded-lg bg-[#1e2128] hover:bg-[#272b35] text-[11px] font-medium text-[#cbd5e1] flex items-center justify-center gap-1.5 transition-colors"
-                    title="Volver a la Galería"
-                  >
-                    <Home className="w-3.5 h-3.5 text-[#5ecd6e] shrink-0" />
-                    <span>Galería</span>
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
         </>
       )}
 

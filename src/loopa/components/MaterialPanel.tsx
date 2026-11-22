@@ -16,6 +16,7 @@ import {
   ViewportDisplayMode,
   WorkMode,
 } from '../core/project/types';
+import { MaterialNodeEditor } from './MaterialNodeEditor';
 import { NumericFieldInput } from './NumericFieldInput';
 
 interface MaterialPanelProps {
@@ -463,6 +464,21 @@ export const MaterialPanel: React.FC<MaterialPanelProps> = ({
             </p>
           )}
         </section>
+
+        {activeMaterial?.nodeGraph && (
+          <MaterialNodeEditor
+            material={activeMaterial}
+            graph={activeMaterial.nodeGraph}
+            onBeginEdit={onPushMaterialHistory}
+            onChange={(nodeGraph) =>
+              onUpdateMaterial(
+                activeMaterial.id,
+                { nodeGraph },
+                false,
+              )
+            }
+          />
+        )}
       </div>
 
       <div className="shrink-0 space-y-2 border-t border-[#272b34] bg-[#16181d] pt-2.5">

@@ -69,8 +69,6 @@ interface FloatingRadialPairProps {
   canRedo: boolean;
   hasUnsavedChanges: boolean;
   saveStatus: SaveStatus;
-  timelapseRecordingActive?: boolean;
-  timelapseStepCount?: number;
   proportionalEnabled: boolean;
   proportionalConnectedOnly: boolean;
   selectedObjectShading?: ObjectShadingMode | null;
@@ -150,7 +148,6 @@ interface FloatingRadialPairProps {
   onExportObj: () => void;
   onExportStl: () => void;
   onReturnToGallery: () => void;
-  onChangeWorkspace: (workspace: WorkspaceId) => void;
   onOpenSettings: () => void;
 }
 
@@ -189,8 +186,6 @@ export const FloatingRadialPair: React.FC<FloatingRadialPairProps> = ({
   canRedo,
   hasUnsavedChanges,
   saveStatus,
-  timelapseRecordingActive = false,
-  timelapseStepCount = 0,
   proportionalEnabled,
   proportionalConnectedOnly,
   selectedObjectShading = null,
@@ -264,7 +259,6 @@ export const FloatingRadialPair: React.FC<FloatingRadialPairProps> = ({
   onExportObj,
   onExportStl,
   onReturnToGallery,
-  onChangeWorkspace,
   onOpenSettings,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -372,8 +366,6 @@ export const FloatingRadialPair: React.FC<FloatingRadialPairProps> = ({
     canRedo,
     hasUnsavedChanges,
     saveStatus,
-    timelapseRecordingActive,
-    timelapseStepCount,
     selectedObjectShading,
     corner: touchSettings.floatingMenuCorner,
     size: touchSettings.floatingMenuSize,
@@ -449,7 +441,6 @@ export const FloatingRadialPair: React.FC<FloatingRadialPairProps> = ({
     onExportObj,
     onExportStl,
     onReturnToGallery,
-    onChangeWorkspace,
     onOpenSettings,
   };
 

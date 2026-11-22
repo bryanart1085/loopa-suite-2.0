@@ -1,5 +1,3 @@
-import { EcosystemSwitchButton } from './ecosystem/EcosystemSwitchButton';
-import type { LoopaAppId } from '../core/ecosystem/types';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpDown,
@@ -70,15 +68,78 @@ import { DeleteMenuPopover } from './DeleteMenuPopover';
 import { PrimitiveMenu } from './PrimitiveMenu';
 import { FalloffCurveIcon, ProportionalIcon } from './ProportionalIcons';
 
+function SculptBrushIcon({ brush, active }: { brush: SculptBrushType; active: boolean }) {
+  const iconColor = active
+    ? '#111215'
+    : (SCULPT_BRUSH_DEFS.find((definition) => definition.id === brush)?.accentColor ?? '#fbbf24');
+  const common = {
+    fill: 'none',
+    stroke: iconColor,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    strokeWidth: 1.7,
+  };
+  const glyphs: Record<SculptBrushType, React.ReactNode> = {
+    draw: <path d="M3 14c3-8 6 7 11 0s4-5 5-7" />,
+    smooth: (
+      <>
+        <path d="M3 7c2-3 4 3 6 0s4 3 6 0 4 3 6 0" />
+        <path d="M3 13c2-3 4 3 6 0s4 3 6 0 4 3 6 0" />
+      </>
+    ),
+    grab: (
+      <>
+        <path d="M4 10h12M4 10l3-3M4 10l3 3M16 10l-3-3M16 10l-3 3" />
+        <path d="M10 3v14M10 3 8 5m2-2 2 2M10 17l-2-2m2 2 2-2" />
+      </>
+    ),
+    clay: (
+      <>
+        <path d="M3 15c3-5 5 2 8-2s5 1 10-4" />
+        <path d="M4 18h15M6 5h12" />
+      </>
+    ),
+    inflate: (
+      <>
+        <circle cx="11" cy="10" r="3.5" />
+        <path d="M11 2v3M11 15v4M3 10h3m10 0h3M5.5 4.5l2 2m7 7 2 2m0-11-2 2m-7 7-2 2" />
+      </>
+    ),
+    crease: <path d="m3 5 5 4 3-3 3 8 6-7" />,
+    flatten: (
+      <>
+        <path d="M3 15h18M5 12l3-5h8l3 5" />
+        <path d="M7 18h10" />
+      </>
+    ),
+    pinch: (
+      <>
+        <path d="M3 5l7 5-7 5M19 5l-7 5 7 5" />
+        <path d="M10 10h4" />
+      </>
+    ),
+    draw_sharp: <path d="m3 16 5-9 3 6 3-8 7 11H3Z" />,
+    clay_strips: (
+      <>
+        <path d="M3 7c4-4 6 4 10 0s5 0 8-2" />
+        <path d="M3 12c4-4 6 4 10 0s5 0 8-2" />
+        <path d="M3 17c4-4 6 4 10 0s5 0 8-2" />
+      </>
+    ),
+  };
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="w-4 h-4 shrink-0" {...common}>
+      {glyphs[brush]}
+    </svg>
+  );
+}
+
 interface LeftToolSidebarProps {
-  /** Active LOOPA app; shows the Ecosystem button next to the mode switcher. */
-  activeAppId?: LoopaAppId;
-  onOpenEcosystem?: () => void;
   displayMode: LeftToolbarDisplayMode;
   barhomeVisible: boolean;
   moduleOrder: SidebarModuleId[];
   expandedModules: Record<SidebarModuleId, boolean>;
-  onCycleDisplayMode: () => void;
   onToggleModuleExpanded: (id: SidebarModuleId) => void;
   onReorderModules: (nextOrder: SidebarModuleId[]) => void;
   onResetModuleLayout: () => void;
@@ -107,7 +168,6 @@ interface LeftToolSidebarProps {
   onChangeAxisConstraint: (axis: AxisConstraint) => void;
   onGQuickTapMove: () => void;
   onGHoldSlide: () => void;
-  onToggleWorkMode: (mode: WorkMode) => void;
   onChangeEditSelectionMode: (mode: EditSelectionMode) => void;
   onChangeVertexSelectionTool: (tool: EditSelectionSubMode) => void;
   onChangeEdgeSelectionTool: (tool: EdgeSelectionTool) => void;
@@ -255,13 +315,10 @@ const COMPONENT_MODE_OPTIONS: {
 ];
 
 export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
-  activeAppId,
-  onOpenEcosystem,
   displayMode,
   barhomeVisible,
   moduleOrder,
   expandedModules,
-  onCycleDisplayMode,
   onToggleModuleExpanded,
   onReorderModules,
   onResetModuleLayout,
@@ -290,7 +347,6 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
   onChangeAxisConstraint,
   onGQuickTapMove,
   onGHoldSlide,
-  onToggleWorkMode,
   onChangeEditSelectionMode,
   onChangeVertexSelectionTool,
   onChangeEdgeSelectionTool,
@@ -331,27 +387,9 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
 }) => {
   const [showPrimitivePopover, setShowPrimitivePopover] = useState(false);
   const [showDeletePopover, setShowDeletePopover] = useState(false);
-  const [showWorkModeMenu, setShowWorkModeMenu] = useState(false);
   const [activeDrag, setActiveDrag] = useState<ActiveDragState | null>(null);
   const [pendingDragId, setPendingDragId] = useState<SidebarModuleId | null>(null);
-  const [compactTooltip, setCompactTooltip] =
-    useState<CompactTooltipState | null>(null);
-  const workModeMenuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!showWorkModeMenu) return;
-    const handleOutside = (e: PointerEvent) => {
-      if (
-        workModeMenuRef.current &&
-        !workModeMenuRef.current.contains(e.target as Node)
-      ) {
-        setShowWorkModeMenu(false);
-      }
-    };
-    window.addEventListener('pointerdown', handleOutside);
-    return () => window.removeEventListener('pointerdown', handleOutside);
-  }, [showWorkModeMenu]);
-
+  const [compactTooltip, setCompactTooltip] = useState<CompactTooltipState | null>(null);
   const isHidden = displayMode === 'hidden';
   const isCompact = displayMode === 'compact';
   const lastVisibleLayoutRef = useRef<'expanded' | 'compact'>('expanded');
@@ -616,11 +654,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             {!isCompact && <span className="truncate">Selección múltiple</span>}
           </button>
 
-          <div
-            className={
-              isCompact ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-1'
-            }
-          >
+          <div className={isCompact ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-1'}>
             <button
               type="button"
               data-testid="sidebar-select-all"
@@ -629,10 +663,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
               aria-label="Seleccionar todo (A)"
               title="Seleccionar todo (A)"
               {...compactTipProps('Seleccionar todo (A)')}
-              className={buttonClass(
-                false,
-                workMode === 'edit' && !canEditSelected,
-              )}
+              className={buttonClass(false, workMode === 'edit' && !canEditSelected)}
             >
               <CheckSquare className="w-4 h-4 shrink-0" />
               {!isCompact && <span className="truncate">Todo</span>}
@@ -641,9 +672,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             <button
               type="button"
               data-testid="sidebar-deselect-all"
-              disabled={
-                workMode === 'edit' ? !hasSelectedComponents : !hasSelectedObject
-              }
+              disabled={workMode === 'edit' ? !hasSelectedComponents : !hasSelectedObject}
               onClick={onDeselectAll}
               aria-label="Limpiar selección (Alt+A)"
               title="Limpiar selección (Alt+A)"
@@ -667,10 +696,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
               aria-label="Seleccionar componentes conectados (Isla / L)"
               title="Seleccionar componentes conectados (Isla / L)"
               {...compactTipProps('Seleccionar conectados (L)')}
-              className={buttonClass(
-                false,
-                !canEditSelected || !hasSelectedComponents,
-              )}
+              className={buttonClass(false, !canEditSelected || !hasSelectedComponents)}
             >
               <Sparkles className="w-4 h-4 shrink-0" />
               {!isCompact && <span className="truncate">Selec. conectados</span>}
@@ -836,18 +862,14 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             aria-label="Mover G / Deslizar (Toque rápido o mantener 0.4s)"
             title="Toque rápido: Mover modal (G) · Mantener 0.4s: Vertex/Edge Slide"
             {...compactTipProps('Mover G / Slide')}
-            className={buttonClass(
-              modalTransformMode !== null,
-              !hasSelectedObject,
-            )}
+            className={buttonClass(modalTransformMode !== null, !hasSelectedObject)}
           >
             <span className="w-4 h-4 rounded bg-[#14161b]/50 border border-current/30 text-[10px] font-bold flex items-center justify-center shrink-0">
               G
             </span>
             {!isCompact && (
               <span className="truncate">
-                {modalTransformMode === 'vertex_slide' ||
-                modalTransformMode === 'edge_slide'
+                {modalTransformMode === 'vertex_slide' || modalTransformMode === 'edge_slide'
                   ? 'Slide activo'
                   : 'Mover G / Slide'}
               </span>
@@ -878,7 +900,12 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                     label: 'Vértice',
                     title: 'Selección individual de vértice',
                     icon: (
-                      <svg viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        className="w-3.5 h-3.5"
+                        aria-hidden="true"
+                      >
                         <circle cx="8" cy="8" r="2.8" />
                       </svg>
                     ),
@@ -888,7 +915,14 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                     label: 'Bucle',
                     title: 'Selección de bucle de vértices (alternar eje al volver a tocar)',
                     icon: (
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" className="w-3.5 h-3.5" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        className="w-3.5 h-3.5"
+                        aria-hidden="true"
+                      >
                         <circle cx="8" cy="8" r="4.5" strokeDasharray="2 2" />
                         <circle cx="8" cy="3.5" r="1.4" fill="currentColor" />
                         <circle cx="12.5" cy="8" r="1.4" fill="currentColor" />
@@ -935,7 +969,15 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                     label: 'Arista',
                     title: 'Selección individual de arista',
                     icon: (
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-3.5 h-3.5" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        className="w-3.5 h-3.5"
+                        aria-hidden="true"
+                      >
                         <line x1="3" y1="8" x2="13" y2="8" />
                       </svg>
                     ),
@@ -945,7 +987,14 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                     label: 'Bucle',
                     title: 'Selección de bucle (Edge Loop)',
                     icon: (
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-3.5 h-3.5" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        className="w-3.5 h-3.5"
+                        aria-hidden="true"
+                      >
                         <circle cx="8" cy="8" r="4.5" />
                       </svg>
                     ),
@@ -989,7 +1038,15 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                     label: 'Cara',
                     title: 'Selección individual de cara',
                     icon: (
-                      <svg viewBox="0 0 16 16" fill="currentColor" fillOpacity="0.35" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        fillOpacity="0.35"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        className="w-3.5 h-3.5"
+                        aria-hidden="true"
+                      >
                         <rect x="4" y="4" width="8" height="8" rx="1" />
                       </svg>
                     ),
@@ -999,9 +1056,23 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                     label: 'Bucle',
                     title: 'Selección de bucle de caras (alternar eje al volver a tocar)',
                     icon: (
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        className="w-3.5 h-3.5"
+                        aria-hidden="true"
+                      >
                         <rect x="2.5" y="5" width="3.5" height="6" />
-                        <rect x="6.25" y="5" width="3.5" height="6" fill="currentColor" fillOpacity="0.35" />
+                        <rect
+                          x="6.25"
+                          y="5"
+                          width="3.5"
+                          height="6"
+                          fill="currentColor"
+                          fillOpacity="0.35"
+                        />
                         <rect x="10" y="5" width="3.5" height="6" />
                       </svg>
                     ),
@@ -1044,8 +1115,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
           {modelingItems.map((op) => {
             const isActive = activeOperatorType === op.id;
             const requiresSelection = op.id !== 'loop_cut';
-            const disabled =
-              !canEditSelected || (requiresSelection && !hasSelectedComponents);
+            const disabled = !canEditSelected || (requiresSelection && !hasSelectedComponents);
             return (
               <button
                 key={op.id}
@@ -1053,11 +1123,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                 data-testid={`sidebar-op-${op.id}`}
                 disabled={!canEditSelected}
                 onClick={() => onStartOperator(op.id)}
-                title={
-                  disabled && canEditSelected
-                    ? `${op.title} (requiere selección)`
-                    : op.title
-                }
+                title={disabled && canEditSelected ? `${op.title} (requiere selección)` : op.title}
                 aria-label={op.title}
                 aria-pressed={isActive}
                 {...compactTipProps(op.title)}
@@ -1088,10 +1154,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             title="Fusionar vértices seleccionados (M)"
             aria-pressed={activeOperatorType === 'merge'}
             {...compactTipProps('Fusionar (M)')}
-            className={buttonClass(
-              activeOperatorType === 'merge',
-              !canEditSelected,
-            )}
+            className={buttonClass(activeOperatorType === 'merge', !canEditSelected)}
           >
             <GitMerge className="w-4 h-4 shrink-0" />
             {!isCompact && <span className="truncate">Fusionar</span>}
@@ -1106,10 +1169,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             title="Fusionar vértices por distancia"
             aria-pressed={activeOperatorType === 'merge_by_distance'}
             {...compactTipProps('Fusionar por distancia')}
-            className={buttonClass(
-              activeOperatorType === 'merge_by_distance',
-              !canEditSelected,
-            )}
+            className={buttonClass(activeOperatorType === 'merge_by_distance', !canEditSelected)}
           >
             <Minimize2 className="w-4 h-4 shrink-0" />
             {!isCompact && <span className="truncate">Por distancia</span>}
@@ -1124,10 +1184,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             title="Bridge Edge Loops"
             aria-pressed={activeOperatorType === 'bridge_loops'}
             {...compactTipProps('Bridge Edge Loops')}
-            className={buttonClass(
-              activeOperatorType === 'bridge_loops',
-              !canEditSelected,
-            )}
+            className={buttonClass(activeOperatorType === 'bridge_loops', !canEditSelected)}
           >
             <Link2 className="w-4 h-4 shrink-0" />
             {!isCompact && <span className="truncate">Bridge Loops</span>}
@@ -1142,10 +1199,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             title="Limitar disolución por ángulo"
             aria-pressed={activeOperatorType === 'dissolve_limited'}
             {...compactTipProps('Limitar disolución')}
-            className={buttonClass(
-              activeOperatorType === 'dissolve_limited',
-              !canEditSelected,
-            )}
+            className={buttonClass(activeOperatorType === 'dissolve_limited', !canEditSelected)}
           >
             <ScissorsLineDashed className="w-4 h-4 shrink-0" />
             {!isCompact && <span className="truncate">Limitar disolución</span>}
@@ -1159,10 +1213,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             aria-label="Crear cara (F)"
             title="Crear cara (F)"
             {...compactTipProps('Crear cara (F)')}
-            className={buttonClass(
-              false,
-              !canEditSelected || !hasSelectedComponents,
-            )}
+            className={buttonClass(false, !canEditSelected || !hasSelectedComponents)}
           >
             <PaintBucket className="w-4 h-4 shrink-0" />
             {!isCompact && <span className="truncate">Crear cara</span>}
@@ -1171,20 +1222,14 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
           <button
             type="button"
             data-testid="sidebar-topo-connect"
-            disabled={
-              !canEditSelected ||
-              editSelectionMode !== 'vertex' ||
-              !hasSelectedComponents
-            }
+            disabled={!canEditSelected || editSelectionMode !== 'vertex' || !hasSelectedComponents}
             onClick={onConnectVertexPath}
             aria-label="Conectar vértices (J)"
             title="Conectar vértices (J)"
             {...compactTipProps('Conectar vértices (J)')}
             className={buttonClass(
               false,
-              !canEditSelected ||
-                editSelectionMode !== 'vertex' ||
-                !hasSelectedComponents,
+              !canEditSelected || editSelectionMode !== 'vertex' || !hasSelectedComponents,
             )}
           >
             <Waypoints className="w-4 h-4 shrink-0" />
@@ -1228,11 +1273,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
         ) : null,
       visible: workMode === 'edit',
       renderBody: () => (
-        <div
-          className={
-            isCompact ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-1'
-          }
-        >
+        <div className={isCompact ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-1'}>
           <button
             type="button"
             data-testid="sidebar-mark-seam"
@@ -1275,10 +1316,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             aria-label="Seleccionar todas las costuras UV del objeto (Select Seams)"
             title="Seleccionar todas las costuras UV del objeto (Select Seams)"
             {...compactTipProps('Select Seams')}
-            className={buttonClass(
-              false,
-              !canEditSelected || seamCount === 0 || !onSelectSeams,
-            )}
+            className={buttonClass(false, !canEditSelected || seamCount === 0 || !onSelectSeams)}
           >
             <CheckSquare className="w-3.5 h-3.5 shrink-0 text-[#f472b6]" />
             {!isCompact && <span className="truncate">Select Seams</span>}
@@ -1292,10 +1330,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             aria-label="Deseleccionar aristas marcadas como costura UV (Deselect Seams)"
             title="Deseleccionar aristas marcadas como costura UV (Deselect Seams)"
             {...compactTipProps('Deselect Seams')}
-            className={buttonClass(
-              false,
-              !canEditSelected || seamCount === 0 || !onDeselectSeams,
-            )}
+            className={buttonClass(false, !canEditSelected || seamCount === 0 || !onDeselectSeams)}
           >
             <ScissorsLineDashed className="w-3.5 h-3.5 shrink-0 text-[#9ca3af]" />
             {!isCompact && <span className="truncate">Deselect Seams</span>}
@@ -1344,9 +1379,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                 className={buttonClass(false, !canEditSelected)}
               >
                 <RefreshCw className="w-4 h-4 shrink-0" />
-                {!isCompact && (
-                  <span className="truncate">Recalculate Outside</span>
-                )}
+                {!isCompact && <span className="truncate">Recalculate Outside</span>}
               </button>
 
               <button
@@ -1467,22 +1500,15 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                     title={`Curva: ${item.label}`}
                     {...compactTipProps(`Curva: ${item.label}`)}
                     className={`${
-                      isCompact
-                        ? 'h-7 justify-center px-0'
-                        : 'h-8 px-1.5 gap-1'
+                      isCompact ? 'h-7 justify-center px-0' : 'h-8 px-1.5 gap-1'
                     } rounded text-[10px] font-semibold flex items-center transition-colors disabled:opacity-40 ${
                       active
                         ? 'bg-[#2c313b] border border-[#5ecd6e]/70 text-[#7def8e]'
                         : 'bg-[#1e2129] hover:bg-[#2a2f3a] border border-transparent text-[#cbd5e1]'
                     }`}
                   >
-                    <FalloffCurveIcon
-                      falloff={item.id}
-                      className="w-3.5 h-3.5 shrink-0"
-                    />
-                    {!isCompact && (
-                      <span className="truncate">{item.label}</span>
-                    )}
+                    <FalloffCurveIcon falloff={item.id} className="w-3.5 h-3.5 shrink-0" />
+                    {!isCompact && <span className="truncate">{item.label}</span>}
                   </button>
                 );
               })}
@@ -1499,25 +1525,15 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
               </div>
             ) : (
               <div className="flex items-center justify-between text-[10px]">
-                <span className="font-semibold text-[#8a93a4]">
-                  Radio [ / ]
-                </span>
-                <span className="font-mono-tabular font-bold text-[#5ecd6e]">
-                  {radiusText}
-                </span>
+                <span className="font-semibold text-[#8a93a4]">Radio [ / ]</span>
+                <span className="font-mono-tabular font-bold text-[#5ecd6e]">{radiusText}</span>
               </div>
             )}
-            <div
-              className={
-                isCompact ? 'grid grid-cols-2 gap-1' : 'flex items-center gap-1'
-              }
-            >
+            <div className={isCompact ? 'grid grid-cols-2 gap-1' : 'flex items-center gap-1'}>
               <button
                 type="button"
                 disabled={!proportionalConfig.enabled}
-                onClick={() =>
-                  onChangeProportionalRadius(proportionalConfig.radius * 0.9)
-                }
+                onClick={() => onChangeProportionalRadius(proportionalConfig.radius * 0.9)}
                 aria-label="Reducir radio proporcional"
                 title="Reducir radio proporcional ([)"
                 {...compactTipProps('Reducir radio ([)')}
@@ -1536,9 +1552,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                   disabled={!proportionalConfig.enabled}
                   value={Math.min(6, proportionalConfig.radius)}
                   onChange={(e) =>
-                    onChangeProportionalRadius(
-                      clampProportionalRadius(parseFloat(e.target.value)),
-                    )
+                    onChangeProportionalRadius(clampProportionalRadius(parseFloat(e.target.value)))
                   }
                   className="flex-1 min-w-0 accent-[#5ecd6e] cursor-pointer disabled:opacity-40"
                 />
@@ -1546,9 +1560,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
               <button
                 type="button"
                 disabled={!proportionalConfig.enabled}
-                onClick={() =>
-                  onChangeProportionalRadius(proportionalConfig.radius * 1.1)
-                }
+                onClick={() => onChangeProportionalRadius(proportionalConfig.radius * 1.1)}
                 aria-label="Aumentar radio proporcional"
                 title="Aumentar radio proporcional (])"
                 {...compactTipProps('Aumentar radio (])')}
@@ -1576,18 +1588,13 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
       icon: <Sparkles className="w-3.5 h-3.5 text-[#fbbf24] shrink-0" />,
       badge: (
         <span className="px-1 py-0.2 rounded bg-[#2d2310] text-[#fcd34d] text-[9px] font-mono-tabular shrink-0">
-          {SCULPT_BRUSH_DEFS.find((b) => b.id === sculptSettings.brush)?.label ??
-            'Draw'}
+          {SCULPT_BRUSH_DEFS.find((b) => b.id === sculptSettings.brush)?.label ?? 'Draw'}
         </span>
       ),
       visible: workMode === 'sculpt',
       renderBody: () => (
         <>
-          <div
-            className={
-              isCompact ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-1'
-            }
-          >
+          <div className={isCompact ? 'flex flex-col gap-1' : 'grid grid-cols-2 gap-1'}>
             {SCULPT_BRUSH_DEFS.map((brush) => {
               const active = sculptSettings.brush === brush.id;
               return (
@@ -1610,12 +1617,8 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                       : 'bg-[#20232b] hover:bg-[#2a2f3a] border-[#2e3340] text-[#d1d5db] hover:text-white'
                   }`}
                 >
-                  <span className="w-3.5 text-[10px] font-bold font-mono-tabular shrink-0 text-center">
-                    {brush.shortLabel}
-                  </span>
-                  {!isCompact && (
-                    <span className="truncate">{brush.label}</span>
-                  )}
+                  <SculptBrushIcon brush={brush.id} active={active} />
+                  {!isCompact && <span className="truncate">{brush.label}</span>}
                 </button>
               );
             })}
@@ -1624,15 +1627,11 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
           <button
             type="button"
             data-testid="sculpt-invert-btn"
-            onClick={() =>
-              onUpdateSculptSettings({ invert: !sculptSettings.invert })
-            }
+            onClick={() => onUpdateSculptSettings({ invert: !sculptSettings.invert })}
             aria-pressed={sculptSettings.invert}
             aria-label="Invertir dirección del pincel (Alt)"
             title="Invertir dirección del pincel"
-            {...compactTipProps(
-              sculptSettings.invert ? 'Invertir ON' : 'Invertir OFF',
-            )}
+            {...compactTipProps(sculptSettings.invert ? 'Invertir ON' : 'Invertir OFF')}
             className={buttonClass(sculptSettings.invert)}
           >
             <ArrowUpDown className="w-4 h-4 shrink-0" />
@@ -1660,11 +1659,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                 </span>
               </div>
             )}
-            <div
-              className={
-                isCompact ? 'grid grid-cols-2 gap-1' : 'flex items-center gap-1'
-              }
-            >
+            <div className={isCompact ? 'grid grid-cols-2 gap-1' : 'flex items-center gap-1'}>
               <button
                 type="button"
                 onClick={() =>
@@ -1749,11 +1744,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                 Simetría de esculpido
               </div>
             )}
-            <div
-              className={
-                isCompact ? 'flex flex-col gap-1' : 'grid grid-cols-3 gap-1'
-              }
-            >
+            <div className={isCompact ? 'flex flex-col gap-1' : 'grid grid-cols-3 gap-1'}>
               {(['x', 'y', 'z'] as const).map((axis) => {
                 const active = sculptSettings.symmetry[axis];
                 return (
@@ -1789,9 +1780,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
           {!isCompact && (
             <div className="rounded-lg bg-[#121419] border border-[#282c36] p-1.5 space-y-1">
               <div className="flex items-center justify-between text-[10px]">
-                <span className="font-semibold text-[#8a93a4]">
-                  Suavizado de trazo
-                </span>
+                <span className="font-semibold text-[#8a93a4]">Suavizado de trazo</span>
                 <span className="font-mono-tabular font-bold text-[#cbd5e1]">
                   {Math.round(sculptSettings.strokeSmoothing * 100)}%
                 </span>
@@ -1827,9 +1816,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
               className={buttonClass(false, !canEditSelected)}
             >
               <Grid className="w-4 h-4 shrink-0 text-[#5ecd6e]" />
-              {!isCompact && (
-                <span className="truncate">Subdividir malla</span>
-              )}
+              {!isCompact && <span className="truncate">Subdividir malla</span>}
             </button>
           )}
         </>
@@ -1913,10 +1900,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
               aria-label="Separar selección como nuevo objeto"
               title="Separar selección como nuevo objeto"
               {...compactTipProps('Separar selección')}
-              className={buttonClass(
-                false,
-                !canEditSelected || !hasSelectedComponents,
-              )}
+              className={buttonClass(false, !canEditSelected || !hasSelectedComponents)}
             >
               <Sliders className="w-4 h-4 shrink-0" />
               {!isCompact && <span className="truncate">Separar selección</span>}
@@ -1954,10 +1938,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
   };
 
   const visibleModules = useMemo(
-    () =>
-      moduleOrder
-        .map((id) => moduleDescriptors[id])
-        .filter((mod) => mod && mod.visible),
+    () => moduleOrder.map((id) => moduleDescriptors[id]).filter((mod) => mod && mod.visible),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       moduleOrder,
@@ -1989,10 +1970,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
     ],
   );
 
-  const visibleModuleIds = useMemo(
-    () => visibleModules.map((m) => m.id),
-    [visibleModules],
-  );
+  const visibleModuleIds = useMemo(() => visibleModules.map((m) => m.id), [visibleModules]);
 
   const computeTargetVisibleSlot = useCallback(
     (pointerY: number): number => {
@@ -2047,10 +2025,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
     const onPointerMove = (e: PointerEvent) => {
       const pending = pendingDragRef.current;
       if (pending && e.pointerId === pending.pointerId) {
-        const dist = Math.hypot(
-          e.clientX - pending.startX,
-          e.clientY - pending.startY,
-        );
+        const dist = Math.hypot(e.clientX - pending.startX, e.clientY - pending.startY);
         if (pending.pointerType === 'touch' || pending.pointerType === 'pen') {
           if (dist > 10) {
             cancelDragState();
@@ -2150,9 +2125,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
           container.scrollTop += delta;
           const refreshedSlot = computeTargetVisibleSlot(current.pointerY);
           if (refreshedSlot !== current.targetVisibleSlot) {
-            setActiveDrag((prev) =>
-              prev ? { ...prev, targetVisibleSlot: refreshedSlot } : prev,
-            );
+            setActiveDrag((prev) => (prev ? { ...prev, targetVisibleSlot: refreshedSlot } : prev));
           }
         }
       }
@@ -2202,185 +2175,44 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
     setPendingDragId(mod.id);
   };
 
-  const draggedVisibleIndex = activeDrag
-    ? visibleModuleIds.indexOf(activeDrag.id)
-    : -1;
+  const draggedVisibleIndex = activeDrag ? visibleModuleIds.indexOf(activeDrag.id) : -1;
 
   const effectiveInnerMode = isHidden ? lastVisibleLayoutRef.current : displayMode;
 
-  const toggleButtonLabel =
-    displayMode === 'hidden'
-      ? 'Expandir barra de herramientas'
-      : displayMode === 'expanded'
-        ? 'Cambiar barra de herramientas a modo compacto'
-        : 'Ocultar barra de herramientas';
-
   return (
     <>
-      {/* Botón único debajo del logo de LOOPA para el ciclo de 3 estados (Expandida -> Compacta -> Oculta) */}
-      <button
-        type="button"
-        data-testid="left-toolbar-toggle"
-        data-display-mode={displayMode}
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={onCycleDisplayMode}
-        aria-expanded={!isHidden}
-        aria-controls="loopa-left-toolbar"
-        aria-label={toggleButtonLabel}
-        title={toggleButtonLabel}
-        className={`fixed top-[54px] left-2 w-10 h-9 rounded-lg border flex items-center justify-center z-30 shadow-md transition-colors touch-manipulation ${
-          displayMode === 'expanded'
-            ? 'bg-[#16261a] hover:bg-[#1e3322] border-[#5ecd6e]/65 text-[#5ecd6e]'
-            : displayMode === 'compact'
-              ? 'bg-[#112433] hover:bg-[#173044] border-[#38bdf8]/65 text-[#7dd3fc]'
-              : 'bg-[#181a1f]/95 hover:bg-[#23262e] border-[#343a47] text-[#e4e6eb]'
-        }`}
-      >
-        <Wrench className="w-4 h-4" />
-      </button>
-
-      {/* Selector de modo (Objeto / Edición) + botón Ecosystem para cambiar de app */}
-      <div
-        ref={workModeMenuRef}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="fixed top-[54px] left-[54px] z-30"
-      >
-        <div className="flex items-center gap-1.5">
-          {workMode !== 'sculpt' && (
-          <button
-            type="button"
-            data-testid="work-mode-switcher"
-            onClick={() => setShowWorkModeMenu((prev) => !prev)}
-            aria-expanded={showWorkModeMenu}
-            aria-haspopup="menu"
-            aria-label="Cambiar modo de trabajo"
-            title="Cambiar modo de trabajo (Objeto / Edición)"
-            className={`h-9 px-2.5 rounded-lg border flex items-center gap-1.5 text-xs font-semibold shadow-md transition-colors touch-manipulation ${
-              workMode === 'edit'
-                  ? 'bg-[#112433] hover:bg-[#173044] border-[#38bdf8]/70 text-[#7dd3fc]'
-                  : 'bg-[#181a1f]/95 hover:bg-[#23262e] border-[#343a47] text-[#e4e6eb]'
-            }`}
-          >
-            {workMode === 'edit' ? (
-              <Scissors className="w-3.5 h-3.5 text-[#38bdf8] shrink-0" />
-            ) : (
-              <Box className="w-3.5 h-3.5 text-[#5ecd6e] shrink-0" />
-            )}
-            <span className="whitespace-nowrap">
-              {workMode === 'edit' ? 'Edición' : 'Objeto'}
-            </span>
-            <ChevronDown
-              className={`w-3.5 h-3.5 opacity-75 transition-transform ${
-                showWorkModeMenu ? 'rotate-180' : ''
-              }`}
-            />
-          </button>
-          )}
-          {activeAppId && onOpenEcosystem && (
-            <EcosystemSwitchButton
-              activeAppId={activeAppId}
-              onClick={() => {
-                setShowWorkModeMenu(false);
-                onOpenEcosystem();
-              }}
-            />
-          )}
-          {workMode === 'edit' && (
-            <div
-              role="group"
-              aria-label="Modo de selección de componentes"
-              className="flex items-center gap-0.5 p-0.5 rounded-lg bg-[#121419]/95 border border-[#282c36] shadow-md"
-            >
-              {COMPONENT_MODE_OPTIONS.map((comp) => {
-                const active = editSelectionMode === comp.id;
-                return (
-                  <button
-                    key={comp.id}
-                    type="button"
-                    data-testid={`component-mode-${comp.id}`}
-                    aria-pressed={active}
-                    aria-label={comp.title}
-                    title={comp.hint}
-                    onClick={() => onChangeEditSelectionMode(comp.id)}
-                    {...compactTipProps(comp.hint)}
-                    className={`h-8 px-1.5 rounded-md border flex items-center justify-center gap-1 text-[10px] font-semibold transition-colors touch-manipulation ${
-                      active
-                        ? 'bg-[#5ecd6e] border-[#7def8e] text-[#111215]'
-                        : 'bg-[#20232b] hover:bg-[#2a2f3a] border-[#2e3340] text-[#d1d5db] hover:text-white'
-                    }`}
-                  >
-                    {comp.icon}
-                    <span>{comp.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+      {workMode === 'edit' && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          className="fixed top-[54px] left-[154px] z-30 flex items-center gap-0.5 p-0.5 rounded-lg bg-[#121419]/95 border border-[#282c36] shadow-md"
+          role="group"
+          aria-label="Modo de selección de componentes"
+        >
+          {COMPONENT_MODE_OPTIONS.map((comp) => {
+            const active = editSelectionMode === comp.id;
+            return (
+              <button
+                key={comp.id}
+                type="button"
+                data-testid={`component-mode-${comp.id}`}
+                aria-pressed={active}
+                aria-label={comp.title}
+                title={comp.hint}
+                onClick={() => onChangeEditSelectionMode(comp.id)}
+                {...compactTipProps(comp.hint)}
+                className={`h-8 px-1.5 rounded-md border flex items-center justify-center gap-1 text-[10px] font-semibold transition-colors touch-manipulation ${
+                  active
+                    ? 'bg-[#5ecd6e] border-[#7def8e] text-[#111215]'
+                    : 'bg-[#20232b] hover:bg-[#2a2f3a] border-[#2e3340] text-[#d1d5db] hover:text-white'
+                }`}
+              >
+                {comp.icon}
+                <span>{comp.label}</span>
+              </button>
+            );
+          })}
         </div>
-
-        {showWorkModeMenu && workMode !== 'sculpt' && (
-          <div
-            role="menu"
-            data-testid="work-mode-menu"
-            className="mt-1.5 w-52 rounded-xl bg-[#181a20]/98 border border-[#303543] shadow-2xl p-1.5 space-y-1 backdrop-blur"
-          >
-            <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-[#7c8391]">
-              Modo de trabajo
-            </div>
-            {(
-              [
-                {
-                  id: 'object' as WorkMode,
-                  label: '1. Modo Objeto',
-                  desc: 'Mover, rotar, escalar e iluminación',
-                  icon: <Box className="w-4 h-4 text-[#5ecd6e] shrink-0" />,
-                  disabled: false,
-                },
-                {
-                  id: 'edit' as WorkMode,
-                  label: '2. Modo Edición',
-                  desc: 'Vértices, aristas, caras y UVs',
-                  icon: <Scissors className="w-4 h-4 text-[#38bdf8] shrink-0" />,
-                  disabled: !canEditSelected && workMode !== 'edit',
-                },
-              ] as const
-            ).map((opt) => {
-              const active = workMode === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={active}
-                  data-testid={`work-mode-option-${opt.id}`}
-                  disabled={opt.disabled}
-                  onClick={() => {
-                    onToggleWorkMode(opt.id);
-                    setShowWorkModeMenu(false);
-                  }}
-                  className={`w-full px-2.5 py-2 rounded-lg border text-left flex items-start gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                    active
-                      ? 'bg-[#252b36] border-[#5ecd6e]/70 text-white'
-                      : 'bg-transparent hover:bg-[#222630] border-transparent text-[#cbd5e1]'
-                  }`}
-                >
-                  <div className="mt-0.5">{opt.icon}</div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold leading-tight">
-                      {opt.label}
-                    </div>
-                    <div className="text-[10px] text-[#8e95a2] leading-tight mt-0.5">
-                      {opt.disabled
-                        ? 'Selecciona un objeto de malla'
-                        : opt.desc}
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Barra Lateral Izquierda Modular con 3 estados: Expandida / Compacta / Oculta */}
       <aside
@@ -2400,9 +2232,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
       >
         <div
           className={`${
-            effectiveInnerMode === 'compact'
-              ? 'w-[68px]'
-              : 'w-[218px] sm:w-[234px]'
+            effectiveInnerMode === 'compact' ? 'w-[68px]' : 'w-[218px] sm:w-[234px]'
           } h-full flex flex-col min-h-0`}
         >
           {/* Reserva superior exacta cuando BARHOME está oculta para que el logo y su botón nunca tapen el encabezado */}
@@ -2414,10 +2244,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
           )}
 
           {/* Reserva superior de la fila de botones flotantes (llave inglesa + selector de modo de trabajo) */}
-          <div
-            aria-hidden="true"
-            className="h-11 shrink-0 border-b border-[#272b34]"
-          />
+          <div aria-hidden="true" className="h-11 shrink-0 border-b border-[#272b34]" />
 
           {!isCompact && (
             <div className="h-8 px-2.5 border-b border-[#272b34] flex items-center justify-between gap-1 shrink-0">
@@ -2519,9 +2346,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                         }
                         {...compactTipProps(mod.label)}
                         className={`flex-1 min-w-0 h-7 ${
-                          isCompact
-                            ? 'px-0.5 justify-center'
-                            : 'px-1 justify-between text-left'
+                          isCompact ? 'px-0.5 justify-center' : 'px-1 justify-between text-left'
                         } rounded hover:bg-[#252932] flex items-center gap-1 transition-colors touch-manipulation`}
                       >
                         {isCompact ? (
@@ -2622,9 +2447,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                 {activeDrag.label}
               </span>
             </div>
-            <span className="text-[10px] font-medium text-[#5ecd6e] shrink-0">
-              Mover
-            </span>
+            <span className="text-[10px] font-medium text-[#5ecd6e] shrink-0">Mover</span>
           </div>
         )}
 
