@@ -410,20 +410,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                 {LOOPA_APPS[activeAppId].name}
               </span>
             )}
-            {!demoMode && (
-              <button
-                type="button"
-                data-testid="topbar-share-ecosystem-btn"
-                onClick={onOpenEcosystemHub}
-                title="Compartir con LOOPA Ecosystem"
-                aria-label="Compartir con LOOPA Ecosystem"
-                className="min-h-[32px] px-2.5 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/40 text-primary text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0"
-              >
-                <Share2 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline xl:hidden">Compartir</span>
-                <span className="hidden xl:inline">Compartir con LOOPA Ecosystem</span>
-              </button>
-            )}
 
             <span
               className="hidden md:inline text-xs font-semibold text-[#d1d5db] truncate max-w-[160px]"

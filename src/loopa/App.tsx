@@ -83,6 +83,7 @@ import {
 } from './core/ecosystem/signatures';
 import type { LoopaAppId } from './core/ecosystem/types';
 import { ShareWithEcosystemModal } from './components/ecosystem/ShareWithEcosystemModal';
+import { EcosystemSwitchButton } from './components/ecosystem/EcosystemSwitchButton';
 
 export default function App() {
   const store = useModelerStore();
@@ -216,12 +217,21 @@ export default function App() {
   const nativeProjectInputRef = useRef<HTMLInputElement | null>(null);
   const lastGKeyTimeRef = useRef<number>(0);
 
+  // Only the 3D viewport of Modeler/Sculpt/Materials can produce a thumbnail.
+  // In other views it is hidden and would render a blank image, so keep the
+  // project's existing thumbnail instead.
+  const activeViewRef = useRef(activeView);
+  activeViewRef.current = activeView;
+  const captureVisibleThumbnail = useCallback((): string | null => {
+    const view = activeViewRef.current;
+    if (view !== 'layout' && view !== 'materials') return null;
+    return viewportRef.current?.captureThumbnail() ?? null;
+  }, []);
+
   useEffect(() => {
-    store.registerThumbnailProvider(
-      () => viewportRef.current?.captureThumbnail() ?? null,
-    );
+    store.registerThumbnailProvider(captureVisibleThumbnail);
     return () => store.registerThumbnailProvider(null);
-  }, [store.registerThumbnailProvider]);
+  }, [captureVisibleThumbnail, store.registerThumbnailProvider]);
 
   useEffect(() => {
     store.registerCameraStateProvider(
@@ -941,9 +951,16 @@ export default function App() {
     const session = sessionRef.current;
     const projectId = store.project.id;
     if (session && session.appId === activeAppId && session.projectId === projectId) return;
+    let meta = projectRef.current.ecosystem;
     if (session && session.projectId === projectId) {
       const result = commitEcosystemSession();
-      if (result) store.setEcosystemMeta(result.meta);
+      if (result) meta = result.meta;
+    }
+    if (activeAppId || meta !== projectRef.current.ecosystem) {
+      const base = meta ?? createEmptyEcosystemMeta();
+      store.setEcosystemMeta(
+        activeAppId ? { ...base, lastAppId: activeAppId, lastAppAt: Date.now() } : base,
+      );
     }
     sessionRef.current = activeAppId
       ? {
@@ -1010,15 +1027,18 @@ export default function App() {
       const result = commitEcosystemSession();
       const meta =
         result?.meta ?? store.project.ecosystem ?? createEmptyEcosystemMeta();
-      const thumb = viewportRef.current?.captureThumbnail() ?? undefined;
-      const saved = await store.saveProjectWithEcosystem(meta, thumb);
+      const thumb = captureVisibleThumbnail() ?? undefined;
+      const saved = await store.saveProjectWithEcosystem(
+        { ...meta, lastAppId: target, lastAppAt: Date.now() },
+        thumb,
+      );
       if (!saved) return false;
       setShowShareModal(false);
       handleLaunchAppFromEcosystem(target);
       store.showToast(`"${store.project.name}" abierto en ${LOOPA_APPS[target].name}`);
       return true;
     },
-    [commitEcosystemSession, handleLaunchAppFromEcosystem, store],
+    [captureVisibleThumbnail, commitEcosystemSession, handleLaunchAppFromEcosystem, store],
   );
 
   const handleOpenProjectFromGallery = useCallback(
@@ -1087,10 +1107,10 @@ export default function App() {
       return;
     }
 
-    const thumb = viewportRef.current?.captureThumbnail();
+    const thumb = captureVisibleThumbnail();
     await store.saveProjectWithEcosystem(meta, thumb ?? undefined);
     setActiveView('gallery');
-  }, [commitEcosystemSession, exitingToGallery, store]);
+  }, [captureVisibleThumbnail, commitEcosystemSession, exitingToGallery, store]);
 
   const handleExportNativeFromModeler = useCallback(async () => {
     if (DEMO_MODE) {
@@ -1603,7 +1623,6 @@ export default function App() {
           barhomeVisible={toolbarPrefs.barhomeVisible}
           onToggleBarhome={handleToggleBarhome}
           projectName={store.project.name}
-          onOpenEcosystemHub={() => setShowShareModal(true)}
           activeAppId={activeAppId ?? undefined}
           hasUnsavedChanges={store.hasUnsavedChanges}
           saveStatus={store.saveStatus}
@@ -1676,6 +1695,12 @@ export default function App() {
         {/* Espacios de Trabajo: Editor de UVs / Timelapse */}
         {activeView === 'uv_editing' && (
         <UVWorkspace
+          leadingAction={
+            <EcosystemSwitchButton
+              activeAppId="uvs"
+              onClick={() => setShowShareModal(true)}
+            />
+          }
           ref={uvWorkspaceRef}
           objectId={uvTargetObject?.id ?? null}
           objectName={uvTargetObject?.name ?? null}
@@ -1738,6 +1763,8 @@ export default function App() {
       >
         {activeView === 'layout' && (
           <LeftToolSidebar
+            activeAppId={activeAppId ?? undefined}
+            onOpenEcosystem={() => setShowShareModal(true)}
             displayMode={toolbarPrefs.leftToolbarMode}
             barhomeVisible={toolbarPrefs.barhomeVisible}
             moduleOrder={toolbarPrefs.moduleOrder}
@@ -1837,6 +1864,12 @@ export default function App() {
 
         {activeView === 'materials' && (
           <MaterialWorkspace
+            headerAction={
+              <EcosystemSwitchButton
+                activeAppId="materials"
+                onClick={() => setShowShareModal(true)}
+              />
+            }
             objects={store.renderedObjects}
             selectedObject={store.selectedObject}
             selectedObjectId={store.selectedObjectId}

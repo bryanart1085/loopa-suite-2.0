@@ -94,6 +94,7 @@ export interface UVWorkspaceHandle {
 }
 
 interface UVWorkspaceProps {
+  leadingAction?: React.ReactNode;
   objectId?: string | null;
   objectName?: string | null;
   objectTransform?: ObjectTransform;
@@ -121,6 +122,7 @@ interface UVWorkspaceProps {
 }
 
 export const UVWorkspace = forwardRef<UVWorkspaceHandle, UVWorkspaceProps>(({
+  leadingAction,
   objectId,
   objectName,
   objectTransform,
@@ -560,6 +562,7 @@ export const UVWorkspace = forwardRef<UVWorkspaceHandle, UVWorkspaceProps>(({
     >
       {/* Top UV Tool Bar */}
       <UVToolToolbar
+        leadingAction={leadingAction}
         objectName={objectName}
         reserveTopLeftCorner={reserveTopLeftCorner}
         multiSelectMode={multiSelectMode}

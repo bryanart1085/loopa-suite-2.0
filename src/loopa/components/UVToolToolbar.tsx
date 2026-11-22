@@ -23,6 +23,8 @@ import { UVProjectionType } from '../core/uv/types';
 
 interface UVToolToolbarProps {
   objectName?: string | null;
+  /** Rendered first in the toolbar (e.g. the LOOPA Ecosystem button). */
+  leadingAction?: React.ReactNode;
   reserveTopLeftCorner?: boolean;
   multiSelectMode: boolean;
   keepConnected: boolean;
@@ -45,6 +47,7 @@ interface UVToolToolbarProps {
 
 export const UVToolToolbar: React.FC<UVToolToolbarProps> = ({
   objectName,
+  leadingAction,
   reserveTopLeftCorner = false,
   multiSelectMode,
   keepConnected,
@@ -71,6 +74,7 @@ export const UVToolToolbar: React.FC<UVToolToolbarProps> = ({
       } py-1.5 flex flex-wrap items-center justify-between gap-2 z-20 transition-[padding] duration-200`}
     >
       <div className="flex flex-wrap items-center gap-1.5">
+        {leadingAction}
         {objectName && (
           <span className="px-2 py-1 rounded bg-[#121418] border border-[#2b2e36] text-[11px] font-semibold text-[#cbd5e1] max-w-[140px] truncate">
             {objectName}

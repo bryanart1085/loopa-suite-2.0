@@ -1,3 +1,5 @@
+import { EcosystemSwitchButton } from './ecosystem/EcosystemSwitchButton';
+import type { LoopaAppId } from '../core/ecosystem/types';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpDown,
@@ -69,6 +71,9 @@ import { PrimitiveMenu } from './PrimitiveMenu';
 import { FalloffCurveIcon, ProportionalIcon } from './ProportionalIcons';
 
 interface LeftToolSidebarProps {
+  /** Active LOOPA app; shows the Ecosystem button next to the mode switcher. */
+  activeAppId?: LoopaAppId;
+  onOpenEcosystem?: () => void;
   displayMode: LeftToolbarDisplayMode;
   barhomeVisible: boolean;
   moduleOrder: SidebarModuleId[];
@@ -250,6 +255,8 @@ const COMPONENT_MODE_OPTIONS: {
 ];
 
 export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
+  activeAppId,
+  onOpenEcosystem,
   displayMode,
   barhomeVisible,
   moduleOrder,
@@ -2232,13 +2239,14 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
         <Wrench className="w-4 h-4" />
       </button>
 
-      {/* Botón independiente para cambiar entre Modo Objeto / Edición / Esculpido */}
+      {/* Selector de modo (Objeto / Edición) + botón Ecosystem para cambiar de app */}
       <div
         ref={workModeMenuRef}
         onPointerDown={(e) => e.stopPropagation()}
         className="fixed top-[54px] left-[54px] z-30"
       >
         <div className="flex items-center gap-1.5">
+          {workMode !== 'sculpt' && (
           <button
             type="button"
             data-testid="work-mode-switcher"
@@ -2246,28 +2254,20 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
             aria-expanded={showWorkModeMenu}
             aria-haspopup="menu"
             aria-label="Cambiar modo de trabajo"
-            title="Cambiar modo de trabajo (Objeto / Edición / Esculpido)"
+            title="Cambiar modo de trabajo (Objeto / Edición)"
             className={`h-9 px-2.5 rounded-lg border flex items-center gap-1.5 text-xs font-semibold shadow-md transition-colors touch-manipulation ${
-              workMode === 'sculpt'
-                ? 'bg-[#2a2211] hover:bg-[#362c15] border-[#fbbf24]/75 text-[#fde68a]'
-                : workMode === 'edit'
+              workMode === 'edit'
                   ? 'bg-[#112433] hover:bg-[#173044] border-[#38bdf8]/70 text-[#7dd3fc]'
                   : 'bg-[#181a1f]/95 hover:bg-[#23262e] border-[#343a47] text-[#e4e6eb]'
             }`}
           >
-            {workMode === 'sculpt' ? (
-              <Sparkles className="w-3.5 h-3.5 text-[#fbbf24] shrink-0" />
-            ) : workMode === 'edit' ? (
+            {workMode === 'edit' ? (
               <Scissors className="w-3.5 h-3.5 text-[#38bdf8] shrink-0" />
             ) : (
               <Box className="w-3.5 h-3.5 text-[#5ecd6e] shrink-0" />
             )}
             <span className="whitespace-nowrap">
-              {workMode === 'sculpt'
-                ? 'Esculpido'
-                : workMode === 'edit'
-                  ? 'Edición'
-                  : 'Objeto'}
+              {workMode === 'edit' ? 'Edición' : 'Objeto'}
             </span>
             <ChevronDown
               className={`w-3.5 h-3.5 opacity-75 transition-transform ${
@@ -2275,6 +2275,16 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
               }`}
             />
           </button>
+          )}
+          {activeAppId && onOpenEcosystem && (
+            <EcosystemSwitchButton
+              activeAppId={activeAppId}
+              onClick={() => {
+                setShowWorkModeMenu(false);
+                onOpenEcosystem();
+              }}
+            />
+          )}
           {workMode === 'edit' && (
             <div
               role="group"
@@ -2308,7 +2318,7 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
           )}
         </div>
 
-        {showWorkModeMenu && (
+        {showWorkModeMenu && workMode !== 'sculpt' && (
           <div
             role="menu"
             data-testid="work-mode-menu"
@@ -2332,13 +2342,6 @@ export const LeftToolSidebar: React.FC<LeftToolSidebarProps> = ({
                   desc: 'Vértices, aristas, caras y UVs',
                   icon: <Scissors className="w-4 h-4 text-[#38bdf8] shrink-0" />,
                   disabled: !canEditSelected && workMode !== 'edit',
-                },
-                {
-                  id: 'sculpt' as WorkMode,
-                  label: '3. Modo Esculpido',
-                  desc: 'Pinceles 3D sobre la malla',
-                  icon: <Sparkles className="w-4 h-4 text-[#fbbf24] shrink-0" />,
-                  disabled: !canEditSelected && workMode !== 'sculpt',
                 },
               ] as const
             ).map((opt) => {

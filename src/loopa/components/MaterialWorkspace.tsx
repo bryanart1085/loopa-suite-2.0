@@ -26,6 +26,8 @@ interface MaterialWorkspaceProps {
   editSelectionMode?: EditSelectionMode;
   selectedComponentIds?: Set<string>;
   reserveTopLeftCorner?: boolean;
+  /** Rendered in the header (e.g. the LOOPA Ecosystem button). */
+  headerAction?: React.ReactNode;
   onSelectObject: (id: string) => void;
   onSetObjectShading: (objectId: string, shading: ObjectShadingMode) => void;
   onSetDisplayMode: (mode: ViewportDisplayMode) => void;
@@ -71,6 +73,7 @@ export const MaterialWorkspace: React.FC<MaterialWorkspaceProps> = ({
   editSelectionMode = 'vertex',
   selectedComponentIds,
   reserveTopLeftCorner = false,
+  headerAction,
   onSelectObject,
   onSetObjectShading,
   onSetDisplayMode,
@@ -107,6 +110,8 @@ export const MaterialWorkspace: React.FC<MaterialWorkspaceProps> = ({
             Editor de materiales
           </span>
         </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+        {headerAction}
         <button
           type="button"
           onClick={onReturnToLayout}
@@ -114,6 +119,7 @@ export const MaterialWorkspace: React.FC<MaterialWorkspaceProps> = ({
         >
           Layout
         </button>
+        </div>
       </div>
 
       {/* Existing Real PBR MaterialPanel */}

@@ -34,3 +34,6 @@ use the editor.
 - The LOOPA 3D modeler lives in `src/loopa/` (migrated from a Vite SPA) and is mounted at `/` via a lazy import inside `<ClientOnly>`; it uses three.js, IndexedDB and window APIs, so never import it statically from SSR code.
 - LOOPA projects persist only in the browser (IndexedDB with localStorage mirror); there is no backend.
 - `tsconfig.json` disables `noUncheckedIndexedAccess`, `noPropertyAccessFromIndexSignature` and `exactOptionalPropertyTypes` because the migrated LOOPA code was written without them; re-enable only after fixing `src/loopa/` for them.
+- LOOPA Core ecosystem logic lives in `src/loopa/core/ecosystem/` (pure TS, unit-tested): app registry with owned data domains, per-domain project signatures, session finalize (history, UV basis, violations, stale-UV detection); project data carries it in `ProjectData.ecosystem`, which `normalizeProjectHierarchy` must preserve.
+- The active app is derived in `App.tsx` from the workspace + work mode (layout+sculpt = Sculpt, uv_editing = UVs, materials = Materials, layout = Modeler); app switches go through the share modal (`EcosystemSwitchButton`), never through the top bar.
+- Thumbnails may only be captured while the 3D viewport is visible (Modeler/Sculpt/Materials); otherwise the existing thumbnail is kept.
